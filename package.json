@@ -1,0 +1,14 @@
+{
+  "dependencies": {
+    "@capacitor/core": "^8.6.2",
+    "idb-keyval": "^6.3.0",
+    "lucide-svelte": "^1.0.1",
+    "web-audio-beat-detector": "^8.2.39"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.2",
+    "@tailwindcss/vite": "^4.3.5",
+    "tailwindcss": "^4.3.5",
+    "vite-plugin-pwa": "^2.0.0"
+  }
+}

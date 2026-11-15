@@ -1,0 +1,157 @@
+export type DeckId = 'A' | 'B';
+
+export type RepeatMode = 'off' | 'all' | 'one';
+
+export type PlaybackStatus = 'idle' | 'loading' | 'playing' | 'paused';
+
+export type SortOrder = 'manual' | 'bpm-asc' | 'bpm-desc' | 'title-asc' | 'recent';
+
+export type ThemeMode = 'dark' | 'light';
+
+export type AppModule = 'player' | 'playlists' | 'favorites' | 'monitoring' | 'room' | 'search';
+
+export interface AudiusCatalogTrack {
+  id: string;
+  title: string;
+  artist: string;
+  duration: number;
+  genre: string;
+  artworkUrl: string | null;
+  host: string;
+}
+
+export type PartyBlock =
+  | 'Calentamiento'
+  | 'Cóctel'
+  | 'Cena'
+  | 'Fiesta Principal'
+  | 'Hora Loca'
+  | 'Cierre';
+
+export interface Track {
+  id: string;
+  fileName: string;
+  opfsKey: string;
+  title: string;
+  artist: string;
+  duration: number;
+  sizeBytes: number;
+  mimeType: string;
+  bpm: number | null;
+  bpmStatus: 'pending' | 'analyzing' | 'done' | 'error';
+  block: PartyBlock;
+  playCount: number;
+  favorite?: boolean;
+  addedAt: number;
+}
+
+export interface Playlist {
+  id: string;
+  name: string;
+  block: PartyBlock;
+  trackIds: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface DeckSnapshot {
+  id: DeckId;
+  trackId: string | null;
+  title: string;
+  artist: string;
+  bpm: number | null;
+  duration: number;
+  elapsed: number;
+  gain: number;
+  state: 'empty' | 'preloading' | 'ready' | 'playing' | 'paused' | 'fading-out';
+  hasBufferInRam: boolean;
+}
+
+export interface AudioEngineSnapshot {
+  status: PlaybackStatus;
+  activeDeck: DeckId;
+  deckA: DeckSnapshot;
+  deckB: DeckSnapshot;
+  currentTrackId: string | null;
+  nextTrackId: string | null;
+  upNextTrackIds: string[];
+  elapsed: number;
+  duration: number;
+  crossfading: boolean;
+  crossfadeProgress: number;
+  crossfadeSeconds: number;
+  autoDjEnabled: boolean;
+  shuffle: boolean;
+  repeatMode: RepeatMode;
+  masterVolume: number;
+  ramBuffersCount: number;
+  ramBufferBytes: number;
+  audioContextState: AudioContextState | 'uninitialized';
+  unlocked: boolean;
+  lastError: string | null;
+}
+
+export interface AppSettings {
+  crossfadeSeconds: number;
+  autoDjEnabled: boolean;
+  shuffle: boolean;
+  repeatMode: RepeatMode;
+  masterVolume: number;
+  activePlaylistId: string;
+  theme: ThemeMode;
+}
+
+export interface RoomPermissions {
+  canSkip: boolean;
+  canPause: boolean;
+  canAdd: boolean;
+  canRemove: boolean;
+}
+
+export interface RoomParticipant {
+  id: string;
+  name: string;
+  isHost: boolean;
+  joinedAt: number;
+  permissions: RoomPermissions;
+}
+
+export interface RoomTrackItem {
+  id: string;
+  title: string;
+  artist: string;
+  duration: number;
+  addedById: string;
+  addedByName: string;
+  addedAt: number;
+  hasAudioRelay: boolean;
+}
+
+export interface RoomPublicState {
+  code: string;
+  hostId: string;
+  inviteToken?: string;
+  createdAt: number;
+  expiresAt: number;
+  maxDurationHours: number;
+  participants: RoomParticipant[];
+  tracks: RoomTrackItem[];
+  nowPlayingTitle: string | null;
+  isPlaying: boolean;
+}
+
+export interface SessionExportPayload {
+  app: 'GradMix';
+  version: 1;
+  exportedAt: string;
+  settings: Pick<AppSettings, 'crossfadeSeconds' | 'shuffle' | 'repeatMode' | 'autoDjEnabled'>;
+  playlistName: string;
+  tracks: Array<{
+    title: string;
+    artist: string;
+    fileName: string;
+    duration: number;
+    bpm: number | null;
+    block: PartyBlock;
+  }>;
+}

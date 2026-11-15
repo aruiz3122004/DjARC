@@ -1,0 +1,87 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-sans: 'Inter', 'SF Pro Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  }
+
+  * {
+    border-radius: 0 !important;
+  }
+
+  html.dark {
+    color-scheme: dark;
+    background-color: #000000;
+    color: #f4f4f5;
+  }
+
+  html.light {
+    color-scheme: light;
+    background-color: #f6f7f9;
+    color: #111827;
+  }
+
+  html,
+  body {
+    font-family: var(--font-sans);
+    letter-spacing: -0.01em;
+    min-height: 100dvh;
+    overscroll-behavior-y: contain;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Deslizadores táctiles rectangulares minimalistas */
+input[type='range'].gradmix-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type='range'].gradmix-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 0;
+  background: rgba(113, 113, 122, 0.3);
+}
+
+input[type='range'].gradmix-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  width: 14px;
+  border-radius: 0;
+  background: #111827;
+  border: 1px solid #ffffff;
+  margin-top: -5px;
+}
+
+html.dark input[type='range'].gradmix-slider::-webkit-slider-thumb {
+  background: #22d3ee;
+  border-color: #000000;
+}
+
+input[type='range'].gradmix-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 0;
+  background: rgba(113, 113, 122, 0.3);
+}
+
+input[type='range'].gradmix-slider::-moz-range-thumb {
+  height: 14px;
+  width: 14px;
+  border-radius: 0;
+  background: #111827;
+  border: 1px solid #ffffff;
+}
+
+html.dark input[type='range'].gradmix-slider::-moz-range-thumb {
+  background: #22d3ee;
+  border-color: #000000;
+}

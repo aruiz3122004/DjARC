@@ -63,9 +63,10 @@ Navegador (PWA Svelte 5)
       aceptando `ALLOW` y `MONETIZE`.
 - [x] Node del proyecto fijado en `24.x`.
 - [x] Worker completo en `gradmix-api/` con `npx tsc --noEmit` limpio.
-- [x] Suite de pruebas del Worker aprobada (33 comprobaciones): creación de sala,
-      códigos ocupados, claves, inviteToken, estado, WebSocket, SSE, subida y
-      descarga única de audio, permisos, comandos, bundles, cierre.
+- [x] Suite de pruebas del Worker aprobada (36 comprobaciones, ver
+      `gradmix-api/scripts/smoke.mjs`): creación de sala, códigos ocupados, claves,
+      inviteToken, estado, CORS, WebSocket, SSE, subida y descarga única de audio,
+      permisos, comandos, bundles y cierre.
 - [x] Frontend desacoplado del origen: `apiUrl()` / `apiWsUrl()` en
       `src/lib/api/base.ts`; `npm run check` y `npm run build` limpios.
 - [x] CORS del Worker verificado: preflight 204 para orígenes permitidos y 403
@@ -117,6 +118,10 @@ Verificar:
 ```powershell
 curl.exe https://api.gradmix.arc03.online/api/health
 # {"ok":true,"service":"gradmix-api"}
+
+cd C:\Users\caric\Downloads\proyectos_andres\DjARC\gradmix-api
+node scripts/smoke.mjs https://api.gradmix.arc03.online
+# 36 comprobaciones OK. Todo correcto.
 ```
 
 ### Paso 4 — CNAME del sitio
@@ -147,7 +152,13 @@ vercel deploy --prod --yes
 
 ### Paso 6 — Verificación end-to-end
 
-Desde `https://gradmix.arc03.online`:
+Prueba técnica del Worker (no requiere navegador):
+
+```powershell
+node scripts/smoke.mjs https://api.gradmix.arc03.online
+```
+
+Y desde `https://gradmix.arc03.online`:
 
 1. Crear sala con clave y compartirla por WhatsApp.
 2. Unirse desde otro dispositivo con la clave y con el link de invitación.

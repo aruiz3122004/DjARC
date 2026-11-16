@@ -11,7 +11,9 @@ GradMix.
 ```bash
 npm install
 npx wrangler dev --port 8787   # http://127.0.0.1:8787/api/health
+node scripts/smoke.mjs         # 36 comprobaciones contra el dev local
 npx wrangler deploy            # requiere CLOUDFLARE_API_TOKEN o wrangler login
+node scripts/smoke.mjs https://api.gradmix.arc03.online
 ```
 
 El despliegue completo (DNS, Vercel, verificación) está documentado en

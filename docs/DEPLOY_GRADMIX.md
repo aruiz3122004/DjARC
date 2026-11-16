@@ -83,6 +83,23 @@ node scripts/smoke.mjs https://api.gradmix.arc03.online
 
 ## 3. Cómo desplegar cambios
 
+### Rama de trabajo
+
+Los cambios del asistente se hacen en la rama `opencode`, nunca directamente en `main`:
+
+```powershell
+git switch opencode
+git pull origin opencode
+# ... cambios ...
+git commit -m "tipo(area): descripcion"
+git push origin opencode
+```
+
+`main` solo se actualiza cuando se mergea `opencode` a propósito, así ningún cambio
+llega a producción sin revisión. Desplegar (sección siguiente) toma lo que haya en
+el directorio de trabajo, así que hay que desplegar desde `opencode` o hacer el merge
+primero.
+
 ### API (salas y bundles)
 
 ```powershell

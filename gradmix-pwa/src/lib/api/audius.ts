@@ -1,6 +1,9 @@
 import { inspectAudioContainer, remuxFragmentedMp4ToStandardM4a } from '../audio/audioContainer';
 import type { AudiusCatalogTrack } from '../types';
 
+// El catálogo remoto lo sirve el propio sitio (funciones serverless de Vercel en
+// producción y el plugin de Vite en local), así que siempre es mismo origen.
+
 export async function searchAudiusTracks(
   query: string,
   limit = 24

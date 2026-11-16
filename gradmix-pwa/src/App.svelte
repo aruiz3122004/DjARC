@@ -16,6 +16,7 @@
     fetchAudiusTrending,
     searchAudiusTracks,
   } from './lib/api/audius';
+  import { apiUrl, apiWsUrl } from './lib/api/base';
   import { GradMixAudioEngine } from './lib/audio/audioEngine';
   import { WakeLockManager } from './lib/audio/wakeLock';
   import { IsolatedSearchEngine } from './lib/search/searchEngine';
@@ -305,7 +306,7 @@
     if (syncKey === lastRoomSyncKey) return;
     lastRoomSyncKey = syncKey;
 
-    void fetch(`/api/rooms/${room.code}/state`, {
+    void fetch(apiUrl(`/api/rooms/${room.code}/state`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1324,7 +1325,7 @@
         byteLength: t.sizeBytes,
       }));
 
-      const createRes = await fetch('/api/bundles', {
+      const createRes = await fetch(apiUrl('/api/bundles'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1345,11 +1346,14 @@
         const t = listTracks[i];
         bundleStatusText = `Subiendo audio (${i + 1}/${listTracks.length}): ${t.title}`;
         const buf = await readAudioArrayBuffer(t.opfsKey);
-        const upRes = await fetch(`/api/bundles/${encodeURIComponent(createData.id)}/tracks/${i}`, {
-          method: 'POST',
-          headers: { 'Content-Type': t.mimeType || 'application/octet-stream' },
-          body: buf,
-        });
+        const upRes = await fetch(
+          apiUrl(`/api/bundles/${encodeURIComponent(createData.id)}/tracks/${i}`),
+          {
+            method: 'POST',
+            headers: { 'Content-Type': t.mimeType || 'application/octet-stream' },
+            body: buf,
+          }
+        );
         if (!upRes.ok) {
           throw new Error(`Fallo al subir "${t.title}".`);
         }
@@ -1415,7 +1419,7 @@
     bundleBusy = true;
     bundleStatusText = 'Consultando playlist compartida...';
     try {
-      const metaRes = await fetch(`/api/bundles/${encodeURIComponent(bundleId)}`);
+      const metaRes = await fetch(apiUrl(`/api/bundles/${encodeURIComponent(bundleId)}`));
       const meta = (await metaRes.json()) as {
         playlistName?: string;
         block?: PartyBlock;
@@ -1432,7 +1436,7 @@
         meta.tracks,
         async (index) => {
           const trackRes = await fetch(
-            `/api/bundles/${encodeURIComponent(bundleId)}/tracks/${index}`
+            apiUrl(`/api/bundles/${encodeURIComponent(bundleId)}/tracks/${index}`)
           );
           if (!trackRes.ok) {
             throw new Error(`No se pudo descargar pista ${index + 1}`);
@@ -1587,7 +1591,9 @@
   async function refreshRoomSnapshot(code: string, participantId: string) {
     try {
       const resp = await fetch(
-        `/api/rooms/${encodeURIComponent(code)}?participantId=${encodeURIComponent(participantId)}`
+        apiUrl(
+          `/api/rooms/${encodeURIComponent(code)}?participantId=${encodeURIComponent(participantId)}`
+        )
       );
       if (resp.status === 404 || resp.status === 410) {
         disconnectRoomRealtime();
@@ -1616,8 +1622,9 @@
       roomSocket = null;
     }
 
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${proto}//${window.location.host}/api/rooms/${encodeURIComponent(code)}/ws?participantId=${encodeURIComponent(participantId)}`;
+    const wsUrl = apiWsUrl(
+      `/api/rooms/${encodeURIComponent(code)}/ws?participantId=${encodeURIComponent(participantId)}`
+    );
 
     try {
       const ws = new WebSocket(wsUrl);
@@ -1673,7 +1680,9 @@
 
     // Respaldo SSE + comprobación periódica si WebSocket aún está reconectando
     const es = new EventSource(
-      `/api/rooms/${encodeURIComponent(code)}/events?participantId=${encodeURIComponent(participantId)}`
+      apiUrl(
+        `/api/rooms/${encodeURIComponent(code)}/events?participantId=${encodeURIComponent(participantId)}`
+      )
     );
     roomEventSource = es;
 
@@ -1711,7 +1720,9 @@
   ) {
     try {
       const resp = await fetch(
-        `/api/rooms/${encodeURIComponent(code)}/tracks/${encodeURIComponent(info.trackId)}/audio?participantId=${encodeURIComponent(hostParticipantId)}`
+        apiUrl(
+          `/api/rooms/${encodeURIComponent(code)}/tracks/${encodeURIComponent(info.trackId)}/audio?participantId=${encodeURIComponent(hostParticipantId)}`
+        )
       );
       if (!resp.ok) return;
 
@@ -1771,7 +1782,7 @@
     const res = await actionController.run('room:create', async () => {
       roomError = null;
       try {
-        const resp = await fetch('/api/rooms', {
+        const resp = await fetch(apiUrl('/api/rooms'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1858,7 +1869,7 @@
     await actionController.run('room:join', async () => {
       roomError = null;
       try {
-        const resp = await fetch(`/api/rooms/${encodeURIComponent(params.code)}/join`, {
+        const resp = await fetch(apiUrl(`/api/rooms/${encodeURIComponent(params.code)}/join`), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1903,7 +1914,7 @@
       roomParticipantId = null;
 
       if (isHost) {
-        await fetch(`/api/rooms/${encodeURIComponent(code)}`, {
+        await fetch(apiUrl(`/api/rooms/${encodeURIComponent(code)}`), {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ hostId: pid }),
@@ -1920,7 +1931,9 @@
     await actionController.run(`room:perm:${targetParticipantId}`, async () => {
       if (!room || !roomParticipantId) return;
       try {
-        const resp = await fetch(`/api/rooms/${encodeURIComponent(room.code)}/permissions`, {
+        const resp = await fetch(
+          apiUrl(`/api/rooms/${encodeURIComponent(room.code)}/permissions`),
+          {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1958,18 +1971,21 @@
             const tags = await extractAudioTags(file);
             const title = cleanDisplayTitle(tags.title || parsed.title) || parsed.title;
             const artist = cleanDisplayArtist(tags.artist || parsed.artist);
-            const resp = await fetch(`/api/rooms/${encodeURIComponent(room.code)}/tracks`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': inferAudioMimeType(file.name, file.type),
-                'Idempotency-Key': createRequestId(),
-                'x-participant-id': roomParticipantId,
-                'x-track-filename': encodeURIComponent(file.name),
-                'x-track-title': encodeURIComponent(title),
-                'x-track-artist': encodeURIComponent(artist),
-              },
-              body: file,
-            });
+            const resp = await fetch(
+              apiUrl(`/api/rooms/${encodeURIComponent(room.code)}/tracks`),
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': inferAudioMimeType(file.name, file.type),
+                  'Idempotency-Key': createRequestId(),
+                  'x-participant-id': roomParticipantId,
+                  'x-track-filename': encodeURIComponent(file.name),
+                  'x-track-title': encodeURIComponent(title),
+                  'x-track-artist': encodeURIComponent(artist),
+                },
+                body: file,
+              }
+            );
             const data = (await resp.json()) as { room?: RoomPublicState; error?: string };
             if (!resp.ok) {
               roomError = data.error || 'No se pudo subir la canción a la sala.';
@@ -1993,7 +2009,9 @@
       if (!room || !roomParticipantId) return;
       try {
         const resp = await fetch(
-          `/api/rooms/${encodeURIComponent(room.code)}/tracks/${encodeURIComponent(trackId)}`,
+          apiUrl(
+            `/api/rooms/${encodeURIComponent(room.code)}/tracks/${encodeURIComponent(trackId)}`
+          ),
           {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
@@ -2017,7 +2035,9 @@
     await actionController.run(`room:cmd:${action}`, async () => {
       if (!room || !roomParticipantId) return;
       try {
-        const resp = await fetch(`/api/rooms/${encodeURIComponent(room.code)}/command`, {
+        const resp = await fetch(
+          apiUrl(`/api/rooms/${encodeURIComponent(room.code)}/command`),
+          {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ participantId: roomParticipantId, action }),

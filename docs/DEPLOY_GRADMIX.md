@@ -32,7 +32,7 @@ Navegador (PWA Svelte 5)
 | --- | --- |
 | `gradmix-pwa/server/catalog.ts` | Lógica del catálogo (compartida por plugin de Vite y Vercel). |
 | `gradmix-pwa/server/api/catalog/*.ts` | Entradas de las funciones serverless. |
-| `gradmix-pwa/scripts/build-api.mjs` | Empaqueta cada función en `api/<ruta>.js` autocontenido (generado, en `.gitignore`). |
+| `gradmix-pwa/scripts/build-api.mjs` | Empaqueta cada función en `api/<ruta>.js` autocontenido para Vercel (se regenera también durante el build). |
 | `gradmix-pwa/vite-catalog-plugin.ts` | Servidor de desarrollo de `/api/catalog/*` (Vite proxea salas y bundles al Worker local). |
 | `gradmix-pwa/src/lib/api/base.ts` | `apiUrl()` / `apiWsUrl()` con `VITE_API_BASE`. |
 | `gradmix-api/src/index.ts` | Router del Worker, CORS y creación de códigos. |

@@ -12,8 +12,8 @@ dist
 dist-ssr
 *.local
 
-# Funciones serverless generadas por scripts/build-api.mjs
-/api
+# Funciones serverless generadas por scripts/build-api.mjs (necesarias en Git para auto-deploy en Vercel)
+# /api
 
 # Editor directories and files
 .vscode/*

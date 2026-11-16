@@ -8,7 +8,21 @@ export type SortOrder = 'manual' | 'bpm-asc' | 'bpm-desc' | 'title-asc' | 'recen
 
 export type ThemeMode = 'dark' | 'light';
 
-export type AppModule = 'player' | 'playlists' | 'favorites' | 'monitoring' | 'room' | 'search';
+export type AppModule =
+  | 'player'
+  | 'playlists'
+  | 'favorites'
+  | 'monitoring'
+  | 'room'
+  | 'faq'
+  | 'search';
+
+export interface AccordionItem {
+  id: string;
+  category: string;
+  question: string;
+  answer: string;
+}
 
 export interface AudiusCatalogTrack {
   id: string;
@@ -99,6 +113,9 @@ export interface AppSettings {
   masterVolume: number;
   activePlaylistId: string;
   theme: ThemeMode;
+  storageMode?: 'browser' | 'device';
+  storage90Declined?: boolean;
+  deviceStorageName?: string;
 }
 
 export interface RoomPermissions {
@@ -113,6 +130,8 @@ export interface RoomParticipant {
   name: string;
   isHost: boolean;
   joinedAt: number;
+  lastSeenAt?: number;
+  deviceId?: string;
   permissions: RoomPermissions;
 }
 
@@ -127,6 +146,13 @@ export interface RoomTrackItem {
   hasAudioRelay: boolean;
 }
 
+export interface RoomQueuePreviewItem {
+  id: string;
+  title: string;
+  artist: string;
+  duration: number;
+}
+
 export interface RoomPublicState {
   code: string;
   hostId: string;
@@ -136,7 +162,13 @@ export interface RoomPublicState {
   maxDurationHours: number;
   participants: RoomParticipant[];
   tracks: RoomTrackItem[];
+  playbackQueue?: RoomQueuePreviewItem[];
   nowPlayingTitle: string | null;
+  nowPlayingArtist?: string | null;
+  nowPlayingTrackKey?: string | null;
+  hasLiveAudio?: boolean;
+  basePositionSec?: number;
+  playbackSyncedAtMs?: number;
   isPlaying: boolean;
 }
 

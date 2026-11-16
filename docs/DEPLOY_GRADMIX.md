@@ -83,22 +83,19 @@ node scripts/smoke.mjs https://api.gradmix.arc03.online
 
 ## 3. Cómo desplegar cambios
 
-### Rama de trabajo
+### Rama principal y flujo Git
 
-Los cambios del asistente se hacen en la rama `opencode`, nunca directamente en `main`:
+`main` es la rama principal conectada directamente a Vercel (**Root Directory**: `gradmix-pwa`):
 
 ```powershell
-git switch opencode
-git pull origin opencode
+git switch main
+git pull origin main
 # ... cambios ...
 git commit -m "tipo(area): descripcion"
-git push origin opencode
+git push origin main
 ```
 
-`main` solo se actualiza cuando se mergea `opencode` a propósito, así ningún cambio
-llega a producción sin revisión. Desplegar (sección siguiente) toma lo que haya en
-el directorio de trabajo, así que hay que desplegar desde `opencode` o hacer el merge
-primero.
+Cada `git push origin main` dispara automáticamente el despliegue de producción del frontend y las funciones `/api/catalog/*` en Vercel (`https://gradmix.arc03.online`). *(La rama `opencode` puede usarse opcionalmente para trabajo en borrador y luego integrarse a `main`.)*
 
 ### API (salas y bundles)
 
@@ -116,8 +113,7 @@ node scripts/smoke.mjs https://api.gradmix.arc03.online
 
 ### Sitio (Vercel)
 
-No hay auto-deploy por Git (el proyecto está vinculado en `gradmix-pwa`, no en la
-raíz del repo). Desplegar manualmente:
+El despliegue se dispara automáticamente en cada `push` a `main` (con `Root Directory` = `gradmix-pwa`). Para forzar o verificar un despliegue manual desde local:
 
 ```powershell
 cd gradmix-pwa

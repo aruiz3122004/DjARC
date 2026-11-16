@@ -6,9 +6,84 @@
  * (por ejemplo, navegación privada en navegadores antiguos).
  */
 
+import { createStore, del, get, set } from 'idb-keyval';
+
 const OPFS_DIR_NAME = 'gradmix-audio';
 const FALLBACK_DB_NAME = 'gradmix-audio-fallback';
 const FALLBACK_STORE_NAME = 'files';
+const DEVFS_PREFIX = 'devfs::';
+const DEVICE_FS_KEY = 'device_audio_dir_v1';
+const deviceFsStore = createStore('gradmix-device-fs-db', 'handles');
+
+interface DeviceDirHandleLike extends FileSystemDirectoryHandle {
+  queryPermission?: (desc: { mode: 'read' | 'readwrite' }) => Promise<'granted' | 'denied' | 'prompt'>;
+  requestPermission?: (desc: { mode: 'read' | 'readwrite' }) => Promise<'granted' | 'denied' | 'prompt'>;
+}
+
+let cachedDeviceDir: DeviceDirHandleLike | null = null;
+
+export function isDeviceDirectoryPickerSupported(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function'
+  );
+}
+
+async function ensureDirPermission(
+  handle: DeviceDirHandleLike,
+  mode: 'read' | 'readwrite'
+): Promise<boolean> {
+  try {
+    if (typeof handle.queryPermission === 'function') {
+      const state = await handle.queryPermission({ mode });
+      if (state === 'granted') return true;
+    }
+    if (typeof handle.requestPermission === 'function') {
+      const next = await handle.requestPermission({ mode });
+      return next === 'granted';
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function getDeviceDirectoryHandle(
+  mode: 'read' | 'readwrite' = 'read'
+): Promise<DeviceDirHandleLike | null> {
+  const handle =
+    cachedDeviceDir ?? ((await get<DeviceDirHandleLike>(DEVICE_FS_KEY, deviceFsStore)) ?? null);
+  if (!handle) return null;
+  cachedDeviceDir = handle;
+  const ok = await ensureDirPermission(handle, mode);
+  return ok ? handle : null;
+}
+
+export async function pickDeviceStorageDirectory(): Promise<{ name: string }> {
+  const picker = (
+    window as unknown as {
+      showDirectoryPicker?: (opts?: { id?: string; mode?: 'read' | 'readwrite' }) => Promise<DeviceDirHandleLike>;
+    }
+  ).showDirectoryPicker;
+  if (typeof picker !== 'function') {
+    throw new Error(
+      'Este navegador no permite seleccionar carpetas del sistema directamente. Usa Chrome de escritorio o instala la app.'
+    );
+  }
+  const handle = await picker({ id: 'gradmix-library', mode: 'readwrite' });
+  const ok = await ensureDirPermission(handle, 'readwrite');
+  if (!ok) {
+    throw new Error('Permiso de escritura denegado sobre la carpeta seleccionada.');
+  }
+  cachedDeviceDir = handle;
+  await set(DEVICE_FS_KEY, handle, deviceFsStore);
+  return { name: handle.name || 'Almacenamiento interno' };
+}
+
+export async function clearDeviceDirectorySelection(): Promise<void> {
+  cachedDeviceDir = null;
+  await del(DEVICE_FS_KEY, deviceFsStore).catch(() => {});
+}
 
 export interface StorageUsageInfo {
   supportedOpfs: boolean;
@@ -121,6 +196,20 @@ export async function requestPersistentStorage(): Promise<boolean> {
  * para no duplicar picos de memoria durante cargas masivas.
  */
 export async function saveAudioFile(opfsKey: string, file: File): Promise<void> {
+  if (opfsKey.startsWith(DEVFS_PREFIX)) {
+    const devDir = await getDeviceDirectoryHandle('readwrite');
+    if (!devDir) {
+      throw new Error(
+        'Sin acceso a la carpeta de almacenamiento interno. Selecciona la carpeta nuevamente en Monitoreo.'
+      );
+    }
+    const cleanName = opfsKey.slice(DEVFS_PREFIX.length);
+    const handle = await devDir.getFileHandle(cleanName, { create: true });
+    const writable = await handle.createWritable();
+    await file.stream().pipeTo(writable);
+    return;
+  }
+
   if (isOpfsSupported()) {
     try {
       const dir = await getAudioDirectory();
@@ -146,6 +235,17 @@ export async function saveAudioFile(opfsKey: string, file: File): Promise<void> 
 }
 
 export async function readAudioBlob(opfsKey: string, mimeType = 'audio/mpeg'): Promise<Blob> {
+  if (opfsKey.startsWith(DEVFS_PREFIX)) {
+    const devDir = await getDeviceDirectoryHandle('read');
+    if (!devDir) {
+      throw new Error('No hay permiso para leer desde almacenamiento interno.');
+    }
+    const cleanName = opfsKey.slice(DEVFS_PREFIX.length);
+    const handle = await devDir.getFileHandle(cleanName, { create: false });
+    const file = await handle.getFile();
+    return file.type ? file : new Blob([file], { type: mimeType });
+  }
+
   if (isOpfsSupported()) {
     try {
       const dir = await getAudioDirectory();
@@ -163,10 +263,15 @@ export async function readAudioBlob(opfsKey: string, mimeType = 'audio/mpeg'): P
 }
 
 /**
- * Lee un archivo desde OPFS como ArrayBuffer únicamente bajo demanda
+ * Lee un archivo desde OPFS o carpeta interna como ArrayBuffer únicamente bajo demanda
  * (cuando la pista entra en la ventana de 2 búferes de RAM).
  */
 export async function readAudioArrayBuffer(opfsKey: string): Promise<ArrayBuffer> {
+  if (opfsKey.startsWith(DEVFS_PREFIX)) {
+    const blob = await readAudioBlob(opfsKey);
+    return await blob.arrayBuffer();
+  }
+
   if (isOpfsSupported()) {
     try {
       const dir = await getAudioDirectory();
@@ -182,9 +287,21 @@ export async function readAudioArrayBuffer(opfsKey: string): Promise<ArrayBuffer
 }
 
 /**
- * Elimina un archivo individual de OPFS y libera espacio en disco.
+ * Elimina un archivo individual y libera espacio en disco.
  */
 export async function deleteAudioFile(opfsKey: string): Promise<void> {
+  if (opfsKey.startsWith(DEVFS_PREFIX)) {
+    try {
+      const devDir = await getDeviceDirectoryHandle('readwrite');
+      if (devDir) {
+        await devDir.removeEntry(opfsKey.slice(DEVFS_PREFIX.length));
+      }
+    } catch {
+      // Ignorar si ya no existía en carpeta interna
+    }
+    return;
+  }
+
   if (isOpfsSupported()) {
     try {
       const dir = await getAudioDirectory();
@@ -255,10 +372,14 @@ export async function getStorageUsage(): Promise<StorageUsageInfo> {
   return { supportedOpfs, usageBytes, quotaBytes, persisted };
 }
 
-export function buildSafeOpfsKey(id: string, originalFileName: string): string {
+export function buildSafeOpfsKey(
+  id: string,
+  originalFileName: string,
+  storageMode: 'browser' | 'device' = 'browser'
+): string {
   const extMatch = originalFileName
     .toLowerCase()
     .match(/\.(mp3|wav|wave|m4a|m4b|m4p|m4r|mp4|aac|ogg|oga|opus|flac|webm|weba|3gp|3gpp|amr|aif|aiff|aifc|caf|wma|alac|ac3|mka)$/);
   const ext = extMatch ? extMatch[0] : '.audio';
-  return `${id}${ext}`;
+  return storageMode === 'device' ? `${DEVFS_PREFIX}${id}${ext}` : `${id}${ext}`;
 }

@@ -4,6 +4,7 @@
   import BottomPlayerBar from './components/BottomPlayerBar.svelte';
   import ConfirmModal from './components/ConfirmModal.svelte';
   import CrossfadeControl from './components/CrossfadeControl.svelte';
+  import FaqView from './components/FaqView.svelte';
   import FavoritesView from './components/FavoritesView.svelte';
   import MonitoringView from './components/MonitoringView.svelte';
   import PlayerDeck from './components/PlayerDeck.svelte';
@@ -35,7 +36,10 @@
     buildSafeOpfsKey,
     clearAllAudioFiles,
     deleteAudioFile,
+    getDeviceDirectoryHandle,
     getStorageUsage,
+    isDeviceDirectoryPickerSupported,
+    pickDeviceStorageDirectory,
     readAudioArrayBuffer,
     readAudioBlob,
     requestPersistentStorage,
@@ -102,6 +106,9 @@
   let lastStorageAlertShown = false;
   let playerPlaylistExpanded = $state(false);
   let confirmClosePlaylistOpen = $state(false);
+  let confirmLeaveRoomOpen = $state(false);
+  let roomEvictionAlert = $state<string | null>(null);
+  let storagePromptMode = $state<'recommend' | 'mandatory' | null>(null);
   let pendingAddTrackToPlaylist = $state<Track | null>(null);
   let globalSearchQuery = $state('');
   let searchDropdownOpen = $state(false);
@@ -133,9 +140,52 @@
   let roomEventSource: EventSource | null = null;
   let roomReconnectTimer: number | null = null;
   let roomPollTimer: number | null = null;
+  let roomHeartbeatTimer: number | null = null;
   let activeRoomSession: { code: string; participantId: string } | null = null;
   const roomTrackToLocalId = new Map<string, string>();
   let lastRoomSyncKey = '';
+  let lastUploadedNowAudioKey = '';
+  let guestMuted = $state(false);
+  let guestAudioBlocked = $state(false);
+  let guestAudioEl: HTMLAudioElement | null = null;
+  let guestAudioLoadedKey = '';
+  let lastGuestAudioHeartbeatMs = 0;
+  let roomBackGuardPushed = false;
+
+  function sendGuestAudioHeartbeatNow() {
+    if (!activeRoomSession) return;
+    const now = Date.now();
+    if (now - lastGuestAudioHeartbeatMs < 2800) return;
+    lastGuestAudioHeartbeatMs = now;
+    const { code, participantId } = activeRoomSession;
+    if (roomSocket && roomSocket.readyState === WebSocket.OPEN) {
+      try {
+        roomSocket.send(
+          JSON.stringify({ type: 'audio-heartbeat', receivingAudio: true, muted: guestMuted })
+        );
+        return;
+      } catch {
+        // Fallback a HTTP
+      }
+    }
+    void fetch(apiUrl(`/api/rooms/${encodeURIComponent(code)}/heartbeat`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ participantId }),
+    }).catch(() => {});
+  }
+
+  function getOrCreateDeviceId(): string {
+    try {
+      const existing = localStorage.getItem('gradmix_device_id');
+      if (existing) return existing;
+      const fresh = `dev-${generateTrackId()}`;
+      localStorage.setItem('gradmix_device_id', fresh);
+      return fresh;
+    } catch {
+      return `dev-${generateTrackId()}`;
+    }
+  }
 
   const searchEngine = new IsolatedSearchEngine();
 
@@ -297,41 +347,268 @@
     }
   });
 
-  // Si el usuario es Host de una sala, sincronizamos título actual y estado a invitados
+  async function publishHostNowAudio(code: string, hostId: string, trk: Track) {
+    try {
+      const mem = engine.getMemoryBlob(trk.id);
+      const blob =
+        mem ??
+        (await readAudioBlob(trk.opfsKey, inferAudioMimeType(trk.fileName, trk.mimeType)).catch(
+          () => null
+        ));
+      if (!blob || blob.size === 0 || blob.size > 35 * 1024 * 1024) return;
+      await fetch(apiUrl(`/api/rooms/${encodeURIComponent(code)}/now-audio`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': inferAudioMimeType(trk.fileName, blob.type || trk.mimeType),
+          'x-host-id': hostId,
+          'x-track-key': trk.id,
+        },
+        body: blob,
+      });
+    } catch {
+      // Ignorar fallo puntual al subir pista activa a la sala
+    }
+  }
+
+  function teardownGuestRoomAudio() {
+    if (guestAudioEl) {
+      try {
+        guestAudioEl.pause();
+        guestAudioEl.removeAttribute('src');
+        guestAudioEl.load();
+      } catch {
+        // Ignorar
+      }
+      guestAudioEl = null;
+    }
+    guestAudioLoadedKey = '';
+    guestAudioBlocked = false;
+  }
+
+  function syncGuestRoomPlayback(activeRoom: RoomPublicState, pid: string) {
+    if (!activeRoom.hasLiveAudio || !activeRoom.nowPlayingTrackKey) {
+      if (guestAudioEl) guestAudioEl.pause();
+      return;
+    }
+
+    if (!guestAudioEl) {
+      guestAudioEl = new Audio();
+      guestAudioEl.preload = 'auto';
+      guestAudioEl.setAttribute('playsinline', 'true');
+      guestAudioEl.ontimeupdate = () => {
+        sendGuestAudioHeartbeatNow();
+      };
+    }
+    guestAudioEl.muted = guestMuted;
+
+    const desiredKey = activeRoom.nowPlayingTrackKey;
+    if (guestAudioLoadedKey !== desiredKey) {
+      guestAudioLoadedKey = desiredKey;
+      guestAudioEl.src = apiUrl(
+        `/api/rooms/${encodeURIComponent(activeRoom.code)}/now-audio?participantId=${encodeURIComponent(pid)}&trackKey=${encodeURIComponent(desiredKey)}`
+      );
+      guestAudioEl.load();
+    }
+
+    const basePos = activeRoom.basePositionSec ?? 0;
+    const syncedAt = activeRoom.playbackSyncedAtMs ?? Date.now();
+    const estimatedSec = basePos + (activeRoom.isPlaying ? Math.max(0, (Date.now() - syncedAt) / 1000) : 0);
+
+    if (activeRoom.isPlaying) {
+      const seekAndPlay = () => {
+        if (!guestAudioEl) return;
+        if (
+          Number.isFinite(guestAudioEl.duration) &&
+          guestAudioEl.duration > 0 &&
+          Math.abs(guestAudioEl.currentTime - estimatedSec) > 2.5
+        ) {
+          try {
+            guestAudioEl.currentTime = Math.min(guestAudioEl.duration - 0.5, estimatedSec);
+          } catch {
+            // Ignorar si aún está bufferizando
+          }
+        }
+        void guestAudioEl
+          .play()
+          .then(() => {
+            guestAudioBlocked = false;
+          })
+          .catch(() => {
+            guestAudioBlocked = true;
+          });
+      };
+
+      if (guestAudioEl.readyState >= 1) {
+        seekAndPlay();
+      } else {
+        guestAudioEl.onloadedmetadata = () => seekAndPlay();
+      }
+    } else {
+      guestAudioEl.pause();
+    }
+  }
+
+  function handleToggleGuestMute() {
+    guestMuted = !guestMuted;
+    if (guestAudioEl) {
+      guestAudioEl.muted = guestMuted;
+      if (!guestMuted && room && room.isPlaying && room.hasLiveAudio) {
+        void guestAudioEl
+          .play()
+          .then(() => {
+            guestAudioBlocked = false;
+          })
+          .catch(() => {
+            guestAudioBlocked = true;
+          });
+      }
+    }
+  }
+
+  // Si el usuario es Host de una sala, sincronizamos título actual, audio en vivo, estado y cola real hacia invitados
   $effect(() => {
     if (!room || !roomParticipantId || room.hostId !== roomParticipantId) return;
-    const nowTitle = currentTrack?.title ?? null;
+    const nowTitle = currentTrack ? (cleanDisplayTitle(currentTrack.title) || currentTrack.title) : null;
+    const nowArtist = currentTrack ? (cleanDisplayArtist(currentTrack.artist) || currentTrack.artist) : null;
     const playing = engineSnapshot.status === 'playing';
-    const syncKey = `${room.code}|${nowTitle ?? ''}|${playing}`;
-    if (syncKey === lastRoomSyncKey) return;
-    lastRoomSyncKey = syncKey;
+    const curTrackKey = currentTrack?.id ?? null;
 
-    void fetch(apiUrl(`/api/rooms/${room.code}/state`), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        hostId: roomParticipantId,
-        nowPlayingTitle: nowTitle,
-        isPlaying: playing,
-      }),
-    }).catch(() => {});
+    const upcomingQueue: Track[] = [...upNextTracks];
+    if (hasPlaylistInPlayback && activePlaylistTracks.length > 0 && currentTrack) {
+      const curIdx = activePlaylistTracks.findIndex((t) => t.id === currentTrack.id);
+      const after = curIdx >= 0 ? activePlaylistTracks.slice(curIdx + 1) : activePlaylistTracks;
+      for (const t of after) {
+        if (!upcomingQueue.some((q) => q.id === t.id)) {
+          upcomingQueue.push(t);
+        }
+      }
+    }
+
+    const playbackQueue = upcomingQueue.slice(0, 5).map((t) => ({
+      id: t.id,
+      title: cleanDisplayTitle(t.title) || t.title,
+      artist: cleanDisplayArtist(t.artist) || t.artist,
+      duration: t.duration || 0,
+    }));
+
+    const queueSig = playbackQueue.map((q) => q.id).join(',');
+    const syncKey = `${room.code}|${curTrackKey ?? ''}|${nowTitle ?? ''}|${playing}|${queueSig}`;
+    if (syncKey !== lastRoomSyncKey) {
+      lastRoomSyncKey = syncKey;
+      const roomCode = room.code;
+      const hostId = roomParticipantId;
+      const basePositionSec = untrack(() => engineSnapshot.elapsed) || 0;
+
+      void fetch(apiUrl(`/api/rooms/${encodeURIComponent(roomCode)}/state`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hostId,
+          nowPlayingTitle: nowTitle,
+          nowPlayingArtist: nowArtist,
+          nowPlayingTrackKey: curTrackKey,
+          basePositionSec,
+          isPlaying: playing,
+          playbackQueue,
+        }),
+      }).catch(() => {});
+    }
+
+    if (currentTrack && curTrackKey && curTrackKey !== lastUploadedNowAudioKey) {
+      lastUploadedNowAudioKey = curTrackKey;
+      void publishHostNowAudio(room.code, roomParticipantId, currentTrack);
+    }
+  });
+
+  // Invitados en la sala: reproducen automáticamente el audio en vivo (con Mute local en su dispositivo)
+  $effect(() => {
+    const activeRoom = room;
+    const pid = roomParticipantId;
+    if (!activeRoom || !pid || activeRoom.hostId === pid) {
+      teardownGuestRoomAudio();
+      return;
+    }
+    syncGuestRoomPlayback(activeRoom, pid);
   });
 
   async function refreshStorageInfo() {
     storageInfo = await getStorageUsage();
     const pct =
       storageInfo.quotaBytes > 0 ? (storageInfo.usageBytes / storageInfo.quotaBytes) * 100 : 0;
-    if (pct >= 80) {
+
+    if (settings.storageMode !== 'device') {
+      if (pct >= 99) {
+        storagePromptMode = 'mandatory';
+      } else if (pct >= 90 && !settings.storage90Declined) {
+        storagePromptMode = 'recommend';
+      }
+    }
+
+    if (pct >= 80 && settings.storageMode !== 'device') {
       if (!lastStorageAlertShown) {
         lastStorageAlertShown = true;
         storageWarningDismissed = false;
         showToast(
-          `Almacenamiento cerca del límite (${pct.toFixed(1)}%). Vacía canciones o la base local en Monitoreo.`
+          `Almacenamiento cerca del límite (${pct.toFixed(1)}%). Cambia a almacenamiento interno o vacía canciones.`
         );
       }
     } else {
       lastStorageAlertShown = false;
     }
+  }
+
+  async function handleSwitchToDeviceStorage() {
+    try {
+      if (!isDeviceDirectoryPickerSupported()) {
+        showToast(
+          'Tu navegador móvil no expone selector de carpetas; abre en Chrome de escritorio o compila la APK.'
+        );
+        return;
+      }
+      const { name } = await pickDeviceStorageDirectory();
+      persistSettings({
+        storageMode: 'device',
+        deviceStorageName: name,
+        storage90Declined: false,
+      });
+      storagePromptMode = null;
+      showToast(`Almacenamiento interno activo (${name}). Las nuevas canciones irán allí.`);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      showToast(err instanceof Error ? err.message : 'No se pudo cambiar de almacenamiento.');
+    }
+  }
+
+  function handleDecline90StorageSwitch() {
+    persistSettings({ storage90Declined: true });
+    storagePromptMode = null;
+  }
+
+  async function ensureCanDownloadToStorage(): Promise<boolean> {
+    await refreshStorageInfo();
+    if (settings.storageMode === 'device') {
+      const handle = await getDeviceDirectoryHandle('readwrite');
+      if (!handle) {
+        await handleSwitchToDeviceStorage();
+        const after = await getDeviceDirectoryHandle('readwrite');
+        return Boolean(after);
+      }
+      return true;
+    }
+
+    const pct =
+      storageInfo.quotaBytes > 0 ? (storageInfo.usageBytes / storageInfo.quotaBytes) * 100 : 0;
+    if (pct >= 99) {
+      storagePromptMode = 'mandatory';
+      showToast(
+        'Almacenamiento del navegador al 99%. Es obligatorio cambiar al almacenamiento interno para seguir descargando.'
+      );
+      return false;
+    }
+    if (pct >= 90 && !settings.storage90Declined) {
+      storagePromptMode = 'recommend';
+    }
+    return true;
   }
 
   async function handleClearLocalDatabase() {
@@ -585,6 +862,9 @@
           const extId = `ext-${item.id}`;
 
           await requestPersistentStorage();
+          if (!(await ensureCanDownloadToStorage())) {
+            return;
+          }
           const targetPlaylistId =
             targetPlaylistIdOverride ?? activePlaylist?.id ?? playlists[0]?.id ?? DEFAULT_PLAYLIST_ID;
           const targetPlaylistObj = playlists.find((p) => p.id === targetPlaylistId) ?? activePlaylist;
@@ -603,7 +883,7 @@
             }
 
             const id = generateTrackId();
-            const opfsKey = buildSafeOpfsKey(id, file.name);
+            const opfsKey = buildSafeOpfsKey(id, file.name, settings.storageMode ?? 'browser');
             await saveAudioFile(opfsKey, file);
 
             const newTrack: Track = {
@@ -714,6 +994,9 @@
         }
 
         await requestPersistentStorage();
+        if (!(await ensureCanDownloadToStorage())) {
+          return;
+        }
         const file =
           blob instanceof File
             ? blob
@@ -721,7 +1004,7 @@
                 type: inferAudioMimeType(track.fileName, blob.type || track.mimeType),
               });
         const id = generateTrackId();
-        const opfsKey = buildSafeOpfsKey(id, file.name);
+        const opfsKey = buildSafeOpfsKey(id, file.name, settings.storageMode ?? 'browser');
         await saveAudioFile(opfsKey, file);
 
         const newTrack: Track = {
@@ -786,6 +1069,27 @@
     window.addEventListener('pointerdown', handleFirstGesture, { passive: true });
     window.addEventListener('keydown', handleFirstGesture, { passive: true });
 
+    const handleRoomBackPopstate = () => {
+      if (room && roomParticipantId) {
+        window.history.pushState({ gradmixRoomGuard: true, code: room.code }, '');
+        confirmLeaveRoomOpen = true;
+      }
+    };
+    const handleRoomBeforeUnload = (ev: BeforeUnloadEvent) => {
+      if (room && roomParticipantId) {
+        ev.preventDefault();
+        ev.returnValue = '';
+      }
+    };
+    const handleRoomVisibilityCheck = () => {
+      if (document.visibilityState === 'visible' && activeRoomSession) {
+        void refreshRoomSnapshot(activeRoomSession.code, activeRoomSession.participantId);
+      }
+    };
+    window.addEventListener('popstate', handleRoomBackPopstate);
+    window.addEventListener('beforeunload', handleRoomBeforeUnload);
+    document.addEventListener('visibilitychange', handleRoomVisibilityCheck);
+
     void (async () => {
       const [loadedTracks, loadedPlaylists, loadedSettings] = await Promise.all([
         loadTracks(),
@@ -841,6 +1145,10 @@
       navigator.serviceWorker?.removeEventListener('message', handleSwMessage);
       window.removeEventListener('pointerdown', handleFirstGesture);
       window.removeEventListener('keydown', handleFirstGesture);
+      window.removeEventListener('popstate', handleRoomBackPopstate);
+      window.removeEventListener('beforeunload', handleRoomBeforeUnload);
+      document.removeEventListener('visibilitychange', handleRoomVisibilityCheck);
+      teardownGuestRoomAudio();
     };
   });
 
@@ -910,6 +1218,9 @@
 
     await engine.unlock();
     await requestPersistentStorage();
+    if (!(await ensureCanDownloadToStorage())) {
+      return;
+    }
 
     importing = true;
     importProgress = { done: 0, total: audioFiles.length };
@@ -926,7 +1237,7 @@
       const results = await Promise.allSettled(
         batch.map(async (file, offset): Promise<Track> => {
           const id = generateTrackId();
-          const opfsKey = buildSafeOpfsKey(id, file.name);
+          const opfsKey = buildSafeOpfsKey(id, file.name, settings.storageMode ?? 'browser');
           const parsed = parseTrackFilename(file.name);
           const tags = await extractAudioTags(file);
           const title = cleanDisplayTitle(tags.title || parsed.title) || parsed.title;
@@ -1003,6 +1314,27 @@
 
   function handleSelectPlaylist(id: string) {
     persistSettings({ activePlaylistId: id });
+  }
+
+  async function handlePlayPlaylist(playlistId: string) {
+    const targetPl = playlists.find((p) => p.id === playlistId);
+    if (!targetPl || targetPl.trackIds.length === 0) return;
+
+    await actionController.run(
+      `pl:play:${playlistId}`,
+      async () => {
+        persistSettings({ activePlaylistId: targetPl.id });
+        const combinedTracks =
+          ephemeralTracks.length > 0 ? [...tracks, ...ephemeralTracks] : tracks;
+        engine.syncLibrary(combinedTracks, targetPl.trackIds);
+        await engine.playTrack(targetPl.trackIds[0], {
+          crossfade: engineSnapshot.status === 'playing',
+          crossfadeDuration: Math.min(3, settings.crossfadeSeconds),
+          playlistIndex: 0,
+        });
+      },
+      { minLockMs: 60 }
+    );
   }
 
   function handleCreatePlaylist(name: string) {
@@ -1257,7 +1589,7 @@
           type: item.mimeType || 'audio/mpeg',
         });
         const id = generateTrackId();
-        const opfsKey = buildSafeOpfsKey(id, file.name);
+        const opfsKey = buildSafeOpfsKey(id, file.name, settings.storageMode ?? 'browser');
         await saveAudioFile(opfsKey, file);
 
         const trk: Track = {
@@ -1410,6 +1742,7 @@
 
   async function handleImportFromLink(rawInput: string) {
     if (bundleBusy) return;
+    if (!(await ensureCanDownloadToStorage())) return;
     const bundleId = extractBundleIdFromInput(rawInput);
     if (!bundleId) {
       showToast('Link o código de playlist inválido.');
@@ -1457,6 +1790,7 @@
 
   async function handleImportFromFile(file: File) {
     if (bundleBusy) return;
+    if (!(await ensureCanDownloadToStorage())) return;
     bundleBusy = true;
     bundleStatusText = `Leyendo ${file.name}...`;
 
@@ -1515,8 +1849,18 @@
 
   // ==================== SALA COLABORATIVA ====================
 
+  function ensureRoomBackGuard(code: string) {
+    if (roomBackGuardPushed || typeof window === 'undefined') return;
+    roomBackGuardPushed = true;
+    window.history.pushState({ gradmixRoomGuard: true, code }, '');
+  }
+
   function disconnectRoomRealtime() {
     activeRoomSession = null;
+    lastUploadedNowAudioKey = '';
+    lastRoomSyncKey = '';
+    roomBackGuardPushed = false;
+    teardownGuestRoomAudio();
     if (roomReconnectTimer !== null) {
       window.clearTimeout(roomReconnectTimer);
       roomReconnectTimer = null;
@@ -1524,6 +1868,10 @@
     if (roomPollTimer !== null) {
       window.clearInterval(roomPollTimer);
       roomPollTimer = null;
+    }
+    if (roomHeartbeatTimer !== null) {
+      window.clearInterval(roomHeartbeatTimer);
+      roomHeartbeatTimer = null;
     }
     if (roomSocket) {
       try {
@@ -1543,6 +1891,18 @@
   function handleRoomEventPayload(code: string, participantId: string, event: string, data: unknown) {
     if (event === 'room-state') {
       room = data as RoomPublicState;
+      return;
+    }
+    if (event === 'room-kicked') {
+      const payload = (data ?? {}) as { reason?: string };
+      const reason =
+        payload.reason ||
+        'Fuiste expulsado de la sala por inactividad (10 s sin recibir datos de audio).';
+      disconnectRoomRealtime();
+      room = null;
+      roomParticipantId = null;
+      confirmLeaveRoomOpen = false;
+      roomEvictionAlert = reason;
       return;
     }
     if (event === 'new-room-track') {
@@ -1581,10 +1941,14 @@
     }
     if (event === 'room-closed') {
       const payload = (data ?? {}) as { reason?: string };
-      showToast(payload.reason || 'La sala se cerró.');
+      const hadActiveRoom = Boolean(room && roomParticipantId);
       disconnectRoomRealtime();
       room = null;
       roomParticipantId = null;
+      confirmLeaveRoomOpen = false;
+      if (hadActiveRoom) {
+        roomEvictionAlert = payload.reason || 'La sala se cerró.';
+      }
     }
   }
 
@@ -1595,10 +1959,26 @@
           `/api/rooms/${encodeURIComponent(code)}?participantId=${encodeURIComponent(participantId)}`
         )
       );
-      if (resp.status === 404 || resp.status === 410) {
+      if (resp.status === 403 || resp.status === 404 || resp.status === 410) {
+        const hadGuestRoom = Boolean(room && roomParticipantId && room.hostId !== participantId);
+        let serverError = '';
+        try {
+          const errJson = (await resp.json()) as { error?: string };
+          if (errJson.error) serverError = errJson.error;
+        } catch {
+          // Ignorar cuerpo vacío o no JSON
+        }
         disconnectRoomRealtime();
         room = null;
         roomParticipantId = null;
+        confirmLeaveRoomOpen = false;
+        if (resp.status === 403) {
+          roomEvictionAlert =
+            serverError ||
+            'Fuiste expulsado de la sala por inactividad (10 s sin recibir datos de audio).';
+        } else if (hadGuestRoom) {
+          roomEvictionAlert = serverError || 'La sala se cerró o expiró por inactividad.';
+        }
         return;
       }
       if (!resp.ok) return;
@@ -1686,7 +2066,7 @@
     );
     roomEventSource = es;
 
-    for (const evtName of ['room-state', 'new-room-track', 'room-command', 'room-closed'] as const) {
+    for (const evtName of ['room-state', 'new-room-track', 'room-command', 'room-closed', 'room-kicked'] as const) {
       es.addEventListener(evtName, (ev) => {
         try {
           handleRoomEventPayload(code, participantId, evtName, JSON.parse((ev as MessageEvent).data));
@@ -1703,6 +2083,10 @@
       }
       void refreshRoomSnapshot(code, participantId);
     }, 4000);
+
+    roomHeartbeatTimer = window.setInterval(() => {
+      sendGuestAudioHeartbeatNow();
+    }, 3000);
   }
 
   async function ingestIncomingRoomTrack(
@@ -1788,7 +2172,10 @@
             'Content-Type': 'application/json',
             'Idempotency-Key': createRequestId(),
           },
-          body: JSON.stringify(params),
+          body: JSON.stringify({
+            ...params,
+            deviceId: getOrCreateDeviceId(),
+          }),
         });
         const data = (await resp.json()) as {
           participantId?: string;
@@ -1802,6 +2189,7 @@
         room = data.room;
         roomParticipantId = data.participantId;
         pendingRoomInvite = null;
+        ensureRoomBackGuard(data.room.code);
         connectRoomRealtime(data.room.code, data.participantId);
         showToast(`Sala ${data.room.code} creada.`);
         return data.room;
@@ -1879,6 +2267,7 @@
             password: params.password,
             inviteToken: params.inviteToken,
             userName: params.userName,
+            deviceId: getOrCreateDeviceId(),
           }),
         });
         const data = (await resp.json()) as {
@@ -1893,6 +2282,7 @@
         room = data.room;
         roomParticipantId = data.participantId;
         pendingRoomInvite = null;
+        ensureRoomBackGuard(data.room.code);
         connectRoomRealtime(data.room.code, data.participantId);
         showToast(`Conectado a sala ${data.room.code}.`);
       } catch {
@@ -1901,7 +2291,13 @@
     });
   }
 
+  function requestLeaveOrCloseRoom() {
+    if (!room || !roomParticipantId) return;
+    confirmLeaveRoomOpen = true;
+  }
+
   async function handleLeaveOrCloseRoom() {
+    confirmLeaveRoomOpen = false;
     if (!room || !roomParticipantId) return;
     await actionController.run('room:leave', async () => {
       if (!room || !roomParticipantId) return;
@@ -1919,6 +2315,40 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ hostId: pid }),
         }).catch(() => {});
+      } else {
+        await fetch(apiUrl(`/api/rooms/${encodeURIComponent(code)}/leave`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ participantId: pid }),
+        }).catch(() => {});
+      }
+    });
+  }
+
+  async function handleRemoveParticipant(targetParticipantId: string) {
+    if (!room || !roomParticipantId) return;
+    await actionController.run(`room:kick:${targetParticipantId}`, async () => {
+      if (!room || !roomParticipantId) return;
+      try {
+        const resp = await fetch(
+          apiUrl(
+            `/api/rooms/${encodeURIComponent(room.code)}/participants/${encodeURIComponent(targetParticipantId)}`
+          ),
+          {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hostId: roomParticipantId }),
+          }
+        );
+        const data = (await resp.json()) as { room?: RoomPublicState; error?: string };
+        if (!resp.ok) {
+          roomError = data.error || 'No se pudo eliminar al participante.';
+          return;
+        }
+        if (data.room) room = data.room;
+        showToast('Participante eliminado de la sala.');
+      } catch {
+        roomError = 'Error al eliminar participante.';
       }
     });
   }
@@ -2328,6 +2758,7 @@
             {bundleStatusText}
             {lastExportedLink}
             onSelectPlaylist={handleSelectPlaylist}
+            onPlayPlaylist={(plId) => void handlePlayPlaylist(plId)}
             onCreatePlaylist={handleCreatePlaylist}
             onRenamePlaylist={handleRenamePlaylist}
             onDeletePlaylist={handleDeletePlaylist}
@@ -2381,9 +2812,12 @@
         <MonitoringView
           snapshot={engineSnapshot}
           {storageInfo}
+          storageMode={settings.storageMode ?? 'browser'}
+          deviceStorageName={settings.deviceStorageName ?? ''}
           tracksCount={tracks.length}
           playlistsCount={playlists.length}
           onRefresh={refreshStorageInfo}
+          onSwitchStorage={handleSwitchToDeviceStorage}
           onClearDatabase={handleClearLocalDatabase}
         />
       {:else if activeModule === 'room'}
@@ -2395,16 +2829,22 @@
           {roomActionBusy}
           theme={settings.theme}
           pendingInvite={pendingRoomInvite}
+          {guestMuted}
+          {guestAudioBlocked}
           onClearInvite={() => (pendingRoomInvite = null)}
           onCreateRoom={handleCreateRoom}
           onJoinRoom={handleJoinRoom}
           onShareRoomWhatsApp={handleShareRoomWhatsApp}
-          onLeaveOrCloseRoom={handleLeaveOrCloseRoom}
+          onLeaveOrCloseRoom={requestLeaveOrCloseRoom}
           onUpdatePermissions={handleUpdateRoomPermissions}
+          onRemoveParticipant={handleRemoveParticipant}
+          onToggleGuestMute={handleToggleGuestMute}
           onUploadRoomFiles={handleUploadRoomFiles}
           onDeleteRoomTrack={handleDeleteRoomTrack}
           onRemoteCommand={handleRemoteRoomCommand}
         />
+      {:else if activeModule === 'faq'}
+        <FaqView />
       {/if}
     </main>
   </div>
@@ -2413,6 +2853,7 @@
     inPlayerView={activeModule === 'player'}
     snapshot={engineSnapshot}
     {currentTrack}
+    {nextTrack}
     {upNextTracks}
     activePlaylist={activePlaylist ?? null}
     {activePlaylistTracks}
@@ -2434,6 +2875,7 @@
       void actionController.run('player:transport', () => engine.previous(), {
         minLockMs: 60,
       })}
+    onSeek={(sec) => engine.seekTo(sec)}
     onOpenFullPlayer={() => (activeModule = 'player')}
     onPlayTrack={(trackId, playlistIndex) => void playLibraryTrack(trackId, playlistIndex)}
     onRequestClosePlaylist={() => (confirmClosePlaylistOpen = true)}
@@ -2516,6 +2958,135 @@
     onConfirm={confirmCloseActivePlaylist}
     onCancel={() => (confirmClosePlaylistOpen = false)}
   />
+
+  {#if confirmLeaveRoomOpen && room}
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="w-full max-w-sm border border-zinc-300 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+        <h3 class="text-sm font-bold tracking-tight text-zinc-900 dark:text-white">
+          ¡Estás dentro de una sala!
+        </h3>
+        <p class="mt-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-300">
+          ¿Seguro que quieres salir de la sala <strong>{room.code}</strong>?
+          {room.hostId === roomParticipantId ? ' Si sales como Host, la sala se cerrará para todos.' : ''}
+        </p>
+
+        <div class="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onclick={() => void handleLeaveOrCloseRoom()}
+            class="border border-zinc-300 bg-zinc-100 px-3.5 py-2 text-xs font-medium text-zinc-800 transition hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            Sí, salir
+          </button>
+          <button
+            type="button"
+            onclick={() => (confirmLeaveRoomOpen = false)}
+            class="border border-red-800 bg-red-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-700"
+          >
+            No
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if roomEvictionAlert}
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="room-eviction-title"
+    >
+      <div class="relative w-full max-w-md border border-red-700/60 bg-white p-5 shadow-2xl dark:border-red-900/70 dark:bg-zinc-950">
+        <button
+          type="button"
+          onclick={() => {
+            roomEvictionAlert = null;
+            activeModule = 'player';
+          }}
+          class="absolute top-3 right-3 flex h-8 w-8 items-center justify-center border border-zinc-300 bg-zinc-100 text-zinc-700 transition hover:bg-zinc-200 hover:text-zinc-950 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+          aria-label="Cerrar alerta y volver al reproductor"
+          title="Cerrar y volver al reproductor"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+
+        <div class="pr-10">
+          <div class="mb-2 flex items-center gap-2 text-red-700 dark:text-red-400">
+            <svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 8v5M12 16h.01" />
+            </svg>
+            <h3 id="room-eviction-title" class="text-sm font-semibold">
+              Expulsado de la sala
+            </h3>
+          </div>
+          <p class="text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+            {roomEvictionAlert}
+          </p>
+          <p class="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+            Pulsa la <strong class="text-zinc-800 dark:text-zinc-200">X</strong> arriba a la derecha para volver al reproductor principal.
+          </p>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if storagePromptMode}
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="w-full max-w-sm border border-zinc-300 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+        <h3 class="text-sm font-bold tracking-tight text-zinc-900 dark:text-white">
+          {storagePromptMode === 'mandatory'
+            ? 'Almacenamiento del navegador lleno (99%)'
+            : 'Almacenamiento del navegador casi lleno (90%)'}
+        </h3>
+        <p class="mt-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-300">
+          {#if storagePromptMode === 'mandatory'}
+            Alcanzaste el 99% del almacenamiento del navegador. Es obligatorio cambiar al almacenamiento interno de tu dispositivo para seguir descargando o guardando canciones. Las canciones anteriores permanecerán en el navegador sin migrar y las nuevas irán al dispositivo.
+          {:else}
+            Superaste el 90% del almacenamiento del navegador. Para poder seguir descargando canciones recomendamos que utilices el almacenamiento interno de tu dispositivo (sin migrar lo anterior; las nuevas descargas irán allí).
+          {/if}
+        </p>
+
+        <div class="mt-5 flex flex-wrap justify-end gap-2">
+          {#if storagePromptMode === 'recommend'}
+            <button
+              type="button"
+              onclick={handleDecline90StorageSwitch}
+              class="border border-zinc-300 bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+            >
+              No aceptar
+            </button>
+          {:else}
+            <button
+              type="button"
+              onclick={() => (storagePromptMode = null)}
+              class="border border-zinc-300 bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+            >
+              Cerrar (sin descargar)
+            </button>
+          {/if}
+          <button
+            type="button"
+            onclick={() => void handleSwitchToDeviceStorage()}
+            class="bg-zinc-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
+          >
+            Cambiar almacenamiento
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   {#if toastMessage}
     <div

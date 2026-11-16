@@ -7,6 +7,7 @@
     inPlayerView: boolean;
     snapshot: AudioEngineSnapshot;
     currentTrack: Track | null;
+    nextTrack?: Track | null;
     upNextTracks: Track[];
     activePlaylist: Playlist | null;
     activePlaylistTracks: Track[];
@@ -19,6 +20,7 @@
     onTogglePlay: () => void;
     onNext: () => void;
     onPrevious?: () => void;
+    onSeek?: (seconds: number) => void;
     onOpenFullPlayer: () => void;
     onPlayTrack: (trackId: string, playlistIndex?: number) => void;
     onRequestClosePlaylist: () => void;
@@ -29,6 +31,7 @@
     inPlayerView,
     snapshot,
     currentTrack,
+    nextTrack = null,
     upNextTracks,
     activePlaylist,
     activePlaylistTracks,
@@ -41,6 +44,7 @@
     onTogglePlay,
     onNext,
     onPrevious: _onPrevious,
+    onSeek,
     onOpenFullPlayer,
     onPlayTrack,
     onRequestClosePlaylist,
@@ -48,6 +52,8 @@
   }: Props = $props();
 
   let searchQuery = $state('');
+  let scrubbing = $state(false);
+  let scrubPreview = $state(0);
 
   let showBar = $derived(
     currentTrack !== null &&
@@ -55,9 +61,24 @@
   );
 
   let duration = $derived(snapshot.duration || currentTrack?.duration || 0);
+  let displayElapsed = $derived(scrubbing ? scrubPreview : snapshot.elapsed);
+  let remaining = $derived(Math.max(0, duration - displayElapsed));
   let progressPct = $derived(
-    duration > 0 ? Math.min(100, Math.max(0, (snapshot.elapsed / duration) * 100)) : 0
+    duration > 0 ? Math.min(100, Math.max(0, (displayElapsed / duration) * 100)) : 0
   );
+
+  function handleSeekInput(ev: Event) {
+    const target = ev.currentTarget as HTMLInputElement;
+    scrubbing = true;
+    scrubPreview = Number(target.value);
+  }
+
+  function handleSeekCommit(ev: Event) {
+    const target = ev.currentTarget as HTMLInputElement;
+    const val = Number(target.value);
+    scrubbing = false;
+    onSeek?.(val);
+  }
 
   let filteredPlaylistTracks = $derived.by(() => {
     const raw = searchQuery.trim();
@@ -149,18 +170,50 @@
         </div>
 
         {#if !inPlayerView}
-          <div class="flex items-center justify-between gap-3 border-b border-zinc-200 bg-zinc-50 px-4 py-2 dark:border-zinc-800 dark:bg-zinc-950">
-            <div class="min-w-0 flex-1">
-              <p class="truncate text-xs font-semibold text-zinc-900 dark:text-white">
-                {cleanDisplayTitle(currentTrack.title) || currentTrack.title}
-              </p>
-              <p class="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                {cleanDisplayArtist(currentTrack.artist) || 'Artista desconocido'}
-              </p>
+          <div class="border-b border-zinc-200 bg-zinc-50 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-950">
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-xs font-semibold text-zinc-900 dark:text-white">
+                  {cleanDisplayTitle(currentTrack.title) || currentTrack.title}
+                </p>
+                <p class="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                  {cleanDisplayArtist(currentTrack.artist) || 'Artista desconocido'}
+                </p>
+              </div>
+              {#if nextTrack}
+                <p class="max-w-[46%] shrink-0 truncate text-right text-[10px] text-cyan-700 dark:text-cyan-400">
+                  Sig: {cleanDisplayTitle(nextTrack.title) || nextTrack.title}
+                </p>
+              {/if}
             </div>
-            <span class="shrink-0 text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
-              {formatTime(snapshot.elapsed)} / {formatTime(duration)}
-            </span>
+
+            <!-- Barra de progreso interactiva desde la vista previa -->
+            <div class="mt-2">
+              <div class="relative flex items-center">
+                <div class="pointer-events-none absolute inset-x-0 h-[3px] bg-zinc-200 dark:bg-zinc-800">
+                  <div
+                    class="h-full bg-cyan-500 transition-all duration-100"
+                    style="width: {progressPct}%"
+                  ></div>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max={Math.max(1, duration)}
+                  step="0.25"
+                  value={displayElapsed}
+                  disabled={duration <= 0 || !onSeek}
+                  oninput={handleSeekInput}
+                  onchange={handleSeekCommit}
+                  aria-label="Posición de reproducción en barra previa"
+                  class="gradmix-slider relative z-10 w-full disabled:opacity-40"
+                />
+              </div>
+              <div class="mt-1 flex justify-between text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                <span>{formatTime(displayElapsed)}</span>
+                <span>-{formatTime(remaining)} / {formatTime(duration)}</span>
+              </div>
+            </div>
           </div>
         {/if}
 
@@ -214,12 +267,15 @@
             {:else}
               {#each filteredPlaylistTracks as { plTrk, idx } (`${idx}-${plTrk.id}`)}
                 {@const isPlayingItem = snapshot.currentTrackId === plTrk.id}
+                {@const isNextItem = Boolean(nextTrack && nextTrack.id === plTrk.id && !isPlayingItem)}
                 <button
                   type="button"
                   onclick={() => onPlayTrack(plTrk.id, idx)}
                   class="flex w-full items-center gap-2.5 border-b border-zinc-200/70 px-4 py-2 text-left transition last:border-b-0 dark:border-zinc-900 {isPlayingItem
                     ? 'bg-cyan-500/15 text-cyan-800 dark:text-cyan-300'
-                    : 'hover:bg-zinc-100 dark:hover:bg-zinc-900'}"
+                    : isNextItem
+                      ? 'bg-zinc-100/90 dark:bg-zinc-900/70'
+                      : 'hover:bg-zinc-100 dark:hover:bg-zinc-900'}"
                 >
                   <span class="w-5 shrink-0 tabular-nums text-[11px] font-semibold text-zinc-400">
                     {idx + 1}
@@ -232,6 +288,11 @@
                       {cleanDisplayArtist(plTrk.artist) || 'Artista desconocido'}
                     </p>
                   </div>
+                  {#if isNextItem}
+                    <span class="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-cyan-700 dark:text-cyan-400">
+                      Siguiente
+                    </span>
+                  {/if}
                   <span class="shrink-0 tabular-nums text-[11px] text-zinc-400">
                     {formatTime(plTrk.duration)}
                   </span>
@@ -273,6 +334,11 @@
                 {cleanDisplayArtist(currentTrack.artist) || 'Artista desconocido'}
                 {#if upNextTracks.length > 0}
                   · {upNextTracks.length} en cola
+                {/if}
+                {#if nextTrack}
+                  <span class="text-cyan-700 dark:text-cyan-400">
+                    · Sig: {cleanDisplayTitle(nextTrack.title) || nextTrack.title}
+                  </span>
                 {/if}
               </p>
             </div>
@@ -347,6 +413,8 @@
               {/if}
               {#if upNextTracks.length > 0}
                 {hasPlaylistInPlayback ? ` · +${upNextTracks.length} sig.` : `${upNextTracks.length} siguientes`}
+              {:else if nextTrack}
+                · Sig: {cleanDisplayTitle(nextTrack.title) || nextTrack.title}
               {/if}
             </span>
           </button>

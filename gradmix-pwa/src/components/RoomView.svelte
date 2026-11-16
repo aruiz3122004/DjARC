@@ -1,7 +1,8 @@
 <script lang="ts">
   import whatsappDark from '../assets/whatsapp-dark.png';
   import whatsappLight from '../assets/whatsapp-light.png';
-  import type { RoomPermissions, RoomPublicState, ThemeMode } from '../lib/types';
+  import ConfirmModal from './ConfirmModal.svelte';
+  import type { RoomParticipant, RoomPermissions, RoomPublicState, ThemeMode } from '../lib/types';
   import { AUDIO_ACCEPT_ATTR, formatTime } from '../lib/utils/format';
 
   const PERM_COLUMNS: Array<{ key: keyof RoomPermissions; label: string }> = [
@@ -19,6 +20,8 @@
     roomActionBusy?: boolean;
     theme: ThemeMode;
     pendingInvite?: { code: string; token: string } | null;
+    guestMuted?: boolean;
+    guestAudioBlocked?: boolean;
     onCreateRoom: (params: {
       hostName: string;
       password: string;
@@ -33,6 +36,8 @@
     ) => void;
     onLeaveOrCloseRoom: () => void;
     onUpdatePermissions: (targetParticipantId: string, permissions: RoomPermissions) => void;
+    onRemoveParticipant?: (targetParticipantId: string) => void;
+    onToggleGuestMute?: () => void;
     onUploadRoomFiles: (files: FileList | File[]) => void;
     onDeleteRoomTrack: (trackId: string) => void;
     onRemoteCommand: (action: 'toggle-play' | 'skip-next' | 'previous') => void;
@@ -46,16 +51,22 @@
     roomActionBusy = false,
     theme,
     pendingInvite = null,
+    guestMuted = false,
+    guestAudioBlocked = false,
     onCreateRoom,
     onJoinRoom,
     onClearInvite,
     onShareRoomWhatsApp,
     onLeaveOrCloseRoom,
     onUpdatePermissions,
+    onRemoveParticipant,
+    onToggleGuestMute,
     onUploadRoomFiles,
     onDeleteRoomTrack,
     onRemoteCommand,
   }: Props = $props();
+
+  let pendingKickUser = $state<RoomParticipant | null>(null);
 
   let mode = $state<'join' | 'create'>('join');
 
@@ -95,6 +106,7 @@
   let canPause = $derived(Boolean(isHost || me?.permissions.canPause));
   let canAdd = $derived(Boolean(isHost || me?.permissions.canAdd));
   let canRemove = $derived(Boolean(isHost || me?.permissions.canRemove));
+  let hostQueue = $derived((room?.playbackQueue ?? []).slice(0, 5));
 
   let remainingSeconds = $derived(
     room ? Math.max(0, Math.floor((room.expiresAt - nowMs) / 1000)) : 0
@@ -439,9 +451,43 @@
           <p class="truncate text-xs font-medium text-zinc-900 dark:text-zinc-100">
             {room.nowPlayingTitle ?? 'En espera'}
           </p>
+          {#if room.nowPlayingArtist}
+            <p class="truncate text-[11px] text-zinc-500">{room.nowPlayingArtist}</p>
+          {/if}
+          {#if !isHost && guestAudioBlocked}
+            <p class="mt-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+              Toca el ícono de altavoz para activar el audio en este dispositivo.
+            </p>
+          {/if}
         </div>
 
-        <div class="flex items-center gap-1.5">
+        <div class="flex items-center gap-2">
+          {#if !isHost && onToggleGuestMute}
+            <button
+              type="button"
+              onclick={onToggleGuestMute}
+              title={guestMuted ? 'Activar sonido (solo en tu dispositivo)' : 'Silenciar audio en este dispositivo'}
+              aria-label={guestMuted ? 'Activar sonido' : 'Silenciar'}
+              class="inline-flex h-8 w-8 cursor-pointer items-center justify-center bg-transparent transition hover:scale-110 active:scale-95 {guestMuted
+                ? 'text-red-600 drop-shadow-sm dark:text-red-400'
+                : 'text-zinc-900 drop-shadow-sm hover:text-cyan-600 dark:text-white dark:hover:text-cyan-400'}"
+            >
+              {#if guestMuted}
+                <!-- Altavoz silenciado (con X) sin fondo -->
+                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <path d="M11 5L6 9H2v6h4l5 4V5z" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M22 9l-6 6M16 9l6 6" stroke-linecap="round" />
+                </svg>
+              {:else}
+                <!-- Altavoz activo sin fondo -->
+                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <path d="M11 5L6 9H2v6h4l5 4V5z" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14" stroke-linecap="round" />
+                </svg>
+              {/if}
+            </button>
+          {/if}
+
           <button
             type="button"
             disabled={!canSkip || roomActionBusy}
@@ -457,11 +503,15 @@
 
           <button
             type="button"
-            disabled={!canPause || roomActionBusy}
+            disabled={isHost || !canPause || roomActionBusy}
             onclick={() => onRemoteCommand('toggle-play')}
-            title={room.isPlaying ? 'Pausar' : 'Reproducir'}
-            aria-label={room.isPlaying ? 'Pausar' : 'Reproducir'}
-            class="flex h-9 w-9 items-center justify-center bg-zinc-900 text-white disabled:opacity-30 dark:bg-white dark:text-black"
+            title={isHost
+              ? 'Indicador informativo para invitados (controla Play/Pausa desde el reproductor o barra inferior)'
+              : room.isPlaying
+                ? 'Pausar'
+                : 'Reproducir'}
+            aria-label={isHost ? 'Estado de reproducción' : room.isPlaying ? 'Pausar' : 'Reproducir'}
+            class="flex h-9 w-9 items-center justify-center bg-zinc-900 text-white disabled:cursor-not-allowed disabled:opacity-45 dark:bg-white dark:text-black"
           >
             {#if room.isPlaying}
               <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
@@ -489,10 +539,10 @@
         </div>
       </div>
 
-      <!-- Subida colaborativa de canciones -->
+      <!-- Cola de la sala (pistas subidas + cola real en reproducción del Host) -->
       <div class="mt-4 flex items-center justify-between gap-2">
         <h3 class="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-          Cola de la Sala ({room.tracks.length})
+          Cola de la Sala ({room.tracks.length + hostQueue.length})
         </h3>
 
         {#if canAdd}
@@ -523,7 +573,7 @@
       </div>
 
       <div class="mt-2.5 max-h-56 space-y-1.5 overflow-y-auto">
-        {#if room.tracks.length === 0}
+        {#if room.tracks.length === 0 && hostQueue.length === 0}
           <p class="py-5 text-center text-xs text-zinc-400">
             Aún no hay canciones en la sala.
           </p>
@@ -554,6 +604,29 @@
               {/if}
             </div>
           {/each}
+
+          {#each hostQueue as qTrk, qIdx (`hq-${qIdx}-${qTrk.id}`)}
+            <div class="flex items-center justify-between gap-2 border border-zinc-200 bg-zinc-50/50 px-3 py-2 dark:border-zinc-900 dark:bg-black">
+              <span class="w-4 shrink-0 text-[11px] font-semibold tabular-nums text-zinc-400">
+                {qIdx + 1}
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-xs font-medium text-zinc-900 dark:text-zinc-100">
+                  {qTrk.title}
+                </p>
+                <p class="truncate text-[11px] text-zinc-500">
+                  {qTrk.artist || 'Artista desconocido'}
+                </p>
+              </div>
+              <span
+                class="shrink-0 text-[11px] font-semibold {qIdx === 0
+                  ? 'text-cyan-700 dark:text-cyan-400'
+                  : 'text-zinc-400 dark:text-zinc-500'}"
+              >
+                {qIdx === 0 ? 'Siguiente' : 'En cola'}
+              </span>
+            </div>
+          {/each}
         {/if}
       </div>
 
@@ -570,6 +643,9 @@
                 {#each PERM_COLUMNS as col (col.key)}
                   <th class="px-2 py-2 text-center">{col.label}</th>
                 {/each}
+                {#if isHost && onRemoveParticipant}
+                  <th class="px-2 py-2 text-center">Expulsar</th>
+                {/if}
               </tr>
             </thead>
             <tbody class="divide-y divide-zinc-200 bg-zinc-50/40 dark:divide-zinc-900 dark:bg-black">
@@ -622,6 +698,29 @@
                       {/if}
                     </td>
                   {/each}
+
+                  {#if isHost && onRemoveParticipant}
+                    <td class="px-2 py-2 text-center">
+                      {#if user.isHost}
+                        <span class="text-zinc-400">—</span>
+                      {:else}
+                        <button
+                          type="button"
+                          disabled={roomActionBusy}
+                          onclick={() => (pendingKickUser = user)}
+                          title={`Eliminar a ${user.name} de la sala`}
+                          aria-label={`Eliminar a ${user.name}`}
+                          class="inline-flex h-8 w-8 cursor-pointer items-center justify-center bg-transparent text-red-600 drop-shadow-sm transition hover:scale-110 hover:text-red-700 active:scale-95 disabled:opacity-40 dark:text-red-400 dark:hover:text-red-300"
+                        >
+                          <svg class="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke-linecap="round" stroke-linejoin="round" />
+                            <circle cx="8.5" cy="7" r="4" />
+                            <path d="M18 8l5 5M23 8l-5 5" stroke-linecap="round" />
+                          </svg>
+                        </button>
+                      {/if}
+                    </td>
+                  {/if}
                 </tr>
               {/each}
             </tbody>
@@ -631,3 +730,17 @@
     </div>
   {/if}
 </section>
+
+<ConfirmModal
+  open={pendingKickUser !== null}
+  title="Eliminar participante"
+  message={pendingKickUser ? `¿Seguro que quieres eliminar a "${pendingKickUser.name}" de la sala?` : ''}
+  confirmLabel="Sí, eliminar"
+  danger={true}
+  onConfirm={() => {
+    const target = pendingKickUser;
+    pendingKickUser = null;
+    if (target) onRemoveParticipant?.(target.id);
+  }}
+  onCancel={() => (pendingKickUser = null)}
+/>

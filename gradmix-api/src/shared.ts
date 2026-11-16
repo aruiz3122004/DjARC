@@ -10,7 +10,16 @@ export interface RoomParticipant {
   name: string;
   isHost: boolean;
   joinedAt: number;
+  lastSeenAt?: number;
+  deviceId?: string;
   permissions: RoomPermissions;
+}
+
+export interface RoomQueuePreviewItem {
+  id: string;
+  title: string;
+  artist: string;
+  duration: number;
 }
 
 export interface RoomTrackMeta {
@@ -39,7 +48,14 @@ export interface RoomDoc {
   maxDurationHours: number;
   participants: RoomParticipant[];
   tracks: RoomTrackMeta[];
+  playbackQueue?: RoomQueuePreviewItem[];
   nowPlayingTitle: string | null;
+  nowPlayingArtist?: string | null;
+  nowPlayingTrackKey?: string | null;
+  nowPlayingAudioMime?: string | null;
+  hasLiveAudio?: boolean;
+  basePositionSec?: number;
+  playbackSyncedAtMs?: number;
   isPlaying: boolean;
 }
 
@@ -71,6 +87,7 @@ export interface Env {
 }
 
 export const MAX_ROOM_HOURS = 10;
+export const GUEST_INACTIVITY_MS = 10_000;
 export const MAX_UPLOAD_BYTES = 35 * 1024 * 1024;
 export const BUNDLE_TTL_MS = 24 * 3600 * 1000;
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -112,9 +129,10 @@ export function base64Url(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function hexToBytes(hex: string): Uint8Array {
+function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
   const clean = hex.length % 2 === 0 ? hex : `0${hex}`;
-  const out = new Uint8Array(clean.length / 2);
+  const buffer = new ArrayBuffer(clean.length / 2);
+  const out = new Uint8Array(buffer);
   for (let i = 0; i < out.length; i += 1) {
     out[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
   }
@@ -200,8 +218,8 @@ export function resolveCors(request: Request, allowed: string): HeadersInit | nu
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
     'Access-Control-Allow-Headers':
-      'Content-Type, Idempotency-Key, X-Participant-Id, X-Track-Filename, X-Track-Title, X-Track-Artist, X-Track-Duration',
-    'Access-Control-Expose-Headers': 'Content-Type, Content-Length',
+      'Content-Type, Idempotency-Key, Range, X-Host-Id, X-Track-Key, X-Participant-Id, X-Track-Filename, X-Track-Title, X-Track-Artist, X-Track-Duration',
+    'Access-Control-Expose-Headers': 'Content-Type, Content-Length, Content-Range, Accept-Ranges',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
   };

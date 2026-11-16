@@ -1,4 +1,5 @@
 import {
+  GUEST_INACTIVITY_MS,
   MAX_ROOM_HOURS,
   MAX_UPLOAD_BYTES,
   PASSWORD_ITERATIONS,
@@ -6,6 +7,7 @@ import {
   type RoomDoc,
   type RoomParticipant,
   type RoomPermissions,
+  type RoomQueuePreviewItem,
   type RoomTrackMeta,
   hashPassword,
   json,
@@ -38,6 +40,7 @@ export class RoomDurableObject implements DurableObject {
   private doc: RoomDoc | null = null;
   private loaded = false;
   private readonly sseClients = new Map<string, SseClient>();
+  private readonly lastSeenMemory = new Map<string, number>();
   private readonly encoder = new TextEncoder();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -87,12 +90,21 @@ export class RoomDurableObject implements DurableObject {
       if (subPath === 'join' && method === 'POST') return await this.handleJoin(request, room);
       if (subPath === 'events' && method === 'GET') return this.handleEvents(url, room);
       if (subPath === 'ws' && method === 'GET') return this.handleWebSocket(request, url, room);
+      if (subPath === 'heartbeat' && method === 'POST') return await this.handleHeartbeat(request, room);
+      if (subPath === 'leave' && method === 'POST') return await this.handleLeave(request, room);
+      if (subPath === 'now-audio' && method === 'POST') return await this.handleNowAudioUpload(request, room);
+      if (subPath === 'now-audio' && method === 'GET') return await this.handleNowAudioGet(request, url, room);
       if (subPath === 'permissions' && method === 'POST') {
         return await this.handlePermissions(request, room);
       }
       if (subPath === 'tracks' && method === 'POST') return await this.handleTrackUpload(request, room);
       if (subPath === 'command' && method === 'POST') return await this.handleCommand(request, room);
       if (subPath === 'state' && method === 'POST') return await this.handleStateSync(request, room);
+
+      const kickMatch = subPath.match(/^participants\/([A-Za-z0-9_-]+)$/);
+      if (kickMatch && method === 'DELETE') {
+        return await this.handleKickParticipant(request, room, kickMatch[1]);
+      }
 
       const audioMatch = subPath.match(/^tracks\/([A-Za-z0-9_-]+)\/audio$/);
       if (audioMatch && method === 'GET') return await this.handleTrackAudio(url, room, audioMatch[1]);
@@ -135,6 +147,7 @@ export class RoomDurableObject implements DurableObject {
       hostName?: string;
       password?: string;
       durationHours?: number;
+      deviceId?: string;
     }>(request);
     const code = normalizeCode(request.headers.get('x-room-code') ?? '');
     if (!code) return json({ error: 'Código de sala inválido.' }, 400);
@@ -148,12 +161,16 @@ export class RoomDurableObject implements DurableObject {
     const salt = randomSalt();
     const hostId = `host-${crypto.randomUUID()}`;
     const hostName = (body.hostName ?? 'Host DJ').trim().slice(0, 32) || 'Host DJ';
+    const hostDeviceId =
+      String(body.deviceId ?? '').trim().slice(0, 96) || `host-dev-${code}`;
 
     const host: RoomParticipant = {
       id: hostId,
       name: hostName,
       isHost: true,
       joinedAt: now,
+      lastSeenAt: now,
+      deviceId: hostDeviceId,
       permissions: { canSkip: true, canPause: true, canAdd: true, canRemove: true },
     };
 
@@ -169,13 +186,21 @@ export class RoomDurableObject implements DurableObject {
       maxDurationHours: durationHours,
       participants: [host],
       tracks: [],
+      playbackQueue: [],
       nowPlayingTitle: null,
+      nowPlayingArtist: null,
+      nowPlayingTrackKey: null,
+      nowPlayingAudioMime: null,
+      hasLiveAudio: false,
+      basePositionSec: 0,
+      playbackSyncedAtMs: now,
       isPlaying: false,
     };
 
     this.doc = doc;
+    this.lastSeenMemory.set(hostId, now);
     await this.persist(doc);
-    await this.ctx.storage.setAlarm(doc.expiresAt);
+    await this.scheduleNextAlarm(doc);
 
     return json({ participantId: hostId, room: this.publicRoom(doc) }, 201);
   }
@@ -185,6 +210,7 @@ export class RoomDurableObject implements DurableObject {
       password?: string;
       inviteToken?: string;
       userName?: string;
+      deviceId?: string;
     }>(request);
 
     const inviteValid =
@@ -202,18 +228,42 @@ export class RoomDurableObject implements DurableObject {
       return json({ error: 'Clave incorrecta.' }, 403);
     }
 
-    const participantId = `usr-${crypto.randomUUID()}`;
+    const now = Date.now();
     const userName = (body.userName ?? 'Invitado').trim().slice(0, 32) || 'Invitado';
-    const participant: RoomParticipant = {
-      id: participantId,
-      name: userName,
-      isHost: false,
-      joinedAt: Date.now(),
-      permissions: { canSkip: false, canPause: false, canAdd: true, canRemove: false },
-    };
+    const clientIp = (
+      request.headers.get('CF-Connecting-IP') ??
+      request.headers.get('x-forwarded-for')?.split(',')[0] ??
+      ''
+    ).trim();
+    const deviceId =
+      String(body.deviceId ?? '').trim().slice(0, 96) ||
+      `ip:${clientIp || 'unknown'}:${userName.toLowerCase()}`;
 
-    room.participants.push(participant);
+    // Reutilizar slot si el mismo dispositivo reconecta (evita duplicados)
+    const existing = room.participants.find((p) => !p.isHost && p.deviceId === deviceId);
+    let participantId: string;
+
+    if (existing) {
+      existing.name = userName;
+      existing.lastSeenAt = now;
+      participantId = existing.id;
+    } else {
+      participantId = `usr-${crypto.randomUUID()}`;
+      const participant: RoomParticipant = {
+        id: participantId,
+        name: userName,
+        isHost: false,
+        joinedAt: now,
+        lastSeenAt: now,
+        deviceId,
+        permissions: { canSkip: false, canPause: false, canAdd: true, canRemove: false },
+      };
+      room.participants.push(participant);
+    }
+
+    this.lastSeenMemory.set(participantId, now);
     await this.persist(room);
+    await this.scheduleNextAlarm(room);
 
     const state = this.publicRoom(room);
     this.broadcast('room-state', state);
@@ -274,6 +324,7 @@ export class RoomDurableObject implements DurableObject {
     const server = pair[1];
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ participantId });
+    this.touchParticipant(room, participantId);
 
     server.send(
       JSON.stringify({ event: 'room-state', data: this.publicRoom(room) })
@@ -284,10 +335,25 @@ export class RoomDurableObject implements DurableObject {
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== 'string') return;
+    const attachment = ws.deserializeAttachment() as { participantId?: string } | null;
+    if (this.doc && attachment?.participantId) {
+      this.touchParticipant(this.doc, attachment.participantId);
+    }
     try {
       const parsed = JSON.parse(message) as { type?: string };
       if (parsed.type === 'sync' && this.doc) {
         ws.send(JSON.stringify({ event: 'room-state', data: this.publicRoom(this.doc) }));
+      } else if (parsed.type === 'audio-heartbeat' && this.doc) {
+        ws.send(
+          JSON.stringify({
+            event: 'audio-pulse',
+            data: {
+              serverTimeMs: Date.now(),
+              isPlaying: this.doc.isPlaying,
+              trackKey: this.doc.nowPlayingTrackKey ?? null,
+            },
+          })
+        );
       }
     } catch {
       // Ignorar frames que no sean JSON
@@ -508,12 +574,144 @@ export class RoomDurableObject implements DurableObject {
     return json({ ok: true });
   }
 
+  private async handleHeartbeat(request: Request, room: RoomDoc): Promise<Response> {
+    const body = await readJson<{ participantId?: string }>(request);
+    if (!body.participantId || !this.findParticipant(room, body.participantId)) {
+      return json({ error: 'Participante no activo en la sala.' }, 403);
+    }
+    this.touchParticipant(room, body.participantId);
+    return json({ ok: true, serverTimeMs: Date.now() });
+  }
+
+  private async handleLeave(request: Request, room: RoomDoc): Promise<Response> {
+    const body = await readJson<{ participantId?: string }>(request);
+    if (body.participantId && body.participantId !== room.hostId) {
+      await this.evictParticipant(room, body.participantId, 'Saliste de la sala.');
+    }
+    return json({ left: true });
+  }
+
+  private async handleKickParticipant(
+    request: Request,
+    room: RoomDoc,
+    targetId: string
+  ): Promise<Response> {
+    const body = await readJson<{ hostId?: string }>(request);
+    if (body.hostId !== room.hostId) {
+      return json({ error: 'Solo el host puede eliminar participantes.' }, 403);
+    }
+    const target = this.findParticipant(room, targetId);
+    if (!target || target.isHost) {
+      return json({ error: 'Participante no encontrado.' }, 404);
+    }
+    await this.evictParticipant(room, targetId, 'El host te eliminó de la sala.');
+    return json({ room: this.publicRoom(room) });
+  }
+
+  private async handleNowAudioUpload(request: Request, room: RoomDoc): Promise<Response> {
+    const hostId = request.headers.get('x-host-id') ?? '';
+    if (hostId !== room.hostId) {
+      return json({ error: 'Solo el host puede emitir el audio de la sala.' }, 403);
+    }
+    const trackKey = (request.headers.get('x-track-key') ?? '').slice(0, 140);
+    if (!trackKey) return json({ error: 'Falta x-track-key.' }, 400);
+
+    const declaredLen = Number(request.headers.get('content-length') ?? 0);
+    if (declaredLen > MAX_UPLOAD_BYTES) {
+      return json({ error: 'El archivo excede 35 MB.' }, 413);
+    }
+    if (!request.body || declaredLen <= 0) {
+      return json({ error: 'Audio vacío o sin Content-Length.' }, 400);
+    }
+
+    const mimeType = request.headers.get('content-type') ?? 'audio/mpeg';
+    const r2Key = roomNowAudioKey(room.code);
+    try {
+      const stored = await this.env.AUDIO.put(r2Key, request.body, {
+        httpMetadata: { contentType: mimeType },
+      });
+      if (!stored || stored.size > MAX_UPLOAD_BYTES) {
+        await this.env.AUDIO.delete(r2Key).catch(() => {});
+        return json({ error: 'El archivo excede 35 MB.' }, 413);
+      }
+    } catch {
+      return json({ error: 'Error guardando audio en emisión.' }, 500);
+    }
+
+    room.nowPlayingTrackKey = trackKey;
+    room.nowPlayingAudioMime = mimeType;
+    room.hasLiveAudio = true;
+    await this.persist(room);
+
+    const state = this.publicRoom(room);
+    this.broadcast('room-state', state);
+    return json({ ok: true, trackKey });
+  }
+
+  private async handleNowAudioGet(
+    request: Request,
+    url: URL,
+    room: RoomDoc
+  ): Promise<Response> {
+    const participantId = url.searchParams.get('participantId') ?? '';
+    if (!this.findParticipant(room, participantId)) {
+      return json({ error: 'No perteneces a esta sala.' }, 403);
+    }
+    this.touchParticipant(room, participantId);
+
+    const r2Key = roomNowAudioKey(room.code);
+    const rangeHeader = request.headers.get('range');
+    const mimeType = room.nowPlayingAudioMime || 'audio/mpeg';
+
+    if (rangeHeader) {
+      const m = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+      if (m) {
+        const headObj = await this.env.AUDIO.head(r2Key);
+        if (!headObj) return json({ error: 'No hay audio en emisión aún.' }, 404);
+        const total = headObj.size;
+        const start = Math.min(total - 1, Number(m[1]));
+        const end = m[2] ? Math.min(total - 1, Number(m[2])) : total - 1;
+        const length = end - start + 1;
+        const obj = await this.env.AUDIO.get(r2Key, { range: { offset: start, length } });
+        if (!obj) return json({ error: 'No hay audio en emisión aún.' }, 404);
+        return new Response(obj.body, {
+          status: 206,
+          headers: {
+            'Content-Type': mimeType,
+            'Content-Range': `bytes ${start}-${end}/${total}`,
+            'Content-Length': String(length),
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': 'no-store',
+          },
+        });
+      }
+    }
+
+    const obj = await this.env.AUDIO.get(r2Key);
+    if (!obj) {
+      return json({ error: 'No hay audio en emisión aún.' }, 404);
+    }
+    return new Response(obj.body, {
+      status: 200,
+      headers: {
+        'Content-Type': mimeType,
+        'Content-Length': String(obj.size),
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-store',
+      },
+    });
+  }
+
   private async handleStateSync(request: Request, room: RoomDoc): Promise<Response> {
     const body = await readJson<{
       hostId?: string;
       nowPlayingTitle?: string | null;
+      nowPlayingArtist?: string | null;
+      nowPlayingTrackKey?: string | null;
+      basePositionSec?: number;
       isPlaying?: boolean;
       tracks?: Array<{ id: string; title: string; artist: string; duration: number }>;
+      playbackQueue?: RoomQueuePreviewItem[];
     }>(request);
 
     if (body.hostId !== room.hostId) {
@@ -521,7 +719,26 @@ export class RoomDurableObject implements DurableObject {
     }
 
     room.nowPlayingTitle = body.nowPlayingTitle ?? null;
+    if (body.nowPlayingArtist !== undefined) {
+      room.nowPlayingArtist = body.nowPlayingArtist ?? null;
+    }
+    if (body.nowPlayingTrackKey !== undefined) {
+      room.nowPlayingTrackKey = body.nowPlayingTrackKey ?? null;
+    }
+    if (typeof body.basePositionSec === 'number' && Number.isFinite(body.basePositionSec)) {
+      room.basePositionSec = Math.max(0, body.basePositionSec);
+      room.playbackSyncedAtMs = Date.now();
+    }
     room.isPlaying = Boolean(body.isPlaying);
+
+    if (Array.isArray(body.playbackQueue)) {
+      room.playbackQueue = body.playbackQueue.slice(0, 100).map((item) => ({
+        id: String(item.id ?? '').slice(0, 80),
+        title: String(item.title ?? 'Sin título').slice(0, 140),
+        artist: String(item.artist ?? '').slice(0, 100),
+        duration: Number(item.duration) || 0,
+      }));
+    }
 
     if (Array.isArray(body.tracks)) {
       const existing = new Map(room.tracks.map((t) => [t.id, t]));
@@ -542,6 +759,7 @@ export class RoomDurableObject implements DurableObject {
       });
     }
 
+    await this.pruneInactiveGuests(room, false);
     await this.persist(room);
     const state = this.publicRoom(room);
     this.broadcast('room-state', state);
@@ -554,7 +772,87 @@ export class RoomDurableObject implements DurableObject {
       await this.destroyRoom('La sala alcanzó su tiempo máximo y se autodestruyó.');
       return;
     }
-    await this.ctx.storage.setAlarm(this.doc.expiresAt);
+
+    const changed = await this.pruneInactiveGuests(this.doc, true);
+    if (changed && this.doc) {
+      await this.persist(this.doc);
+      this.broadcast('room-state', this.publicRoom(this.doc));
+    }
+    if (this.doc) {
+      await this.scheduleNextAlarm(this.doc);
+    }
+  }
+
+  private getLastSeen(participant: RoomParticipant): number {
+    return this.lastSeenMemory.get(participant.id) ?? participant.lastSeenAt ?? participant.joinedAt;
+  }
+
+  private touchParticipant(room: RoomDoc, participantId: string): void {
+    const p = this.findParticipant(room, participantId);
+    if (!p) return;
+    const now = Date.now();
+    this.lastSeenMemory.set(participantId, now);
+    p.lastSeenAt = now;
+  }
+
+  private async scheduleNextAlarm(room: RoomDoc): Promise<void> {
+    const hasGuests = room.participants.some((p) => !p.isHost);
+    const nextCheck = hasGuests
+      ? Math.min(room.expiresAt, Date.now() + 5000)
+      : room.expiresAt;
+    await this.ctx.storage.setAlarm(nextCheck);
+  }
+
+  private async pruneInactiveGuests(room: RoomDoc, notifyKicked: boolean): Promise<boolean> {
+    const now = Date.now();
+    const staleIds = room.participants
+      .filter((p) => !p.isHost && now - this.getLastSeen(p) > GUEST_INACTIVITY_MS)
+      .map((p) => p.id);
+
+    if (staleIds.length === 0) return false;
+    for (const staleId of staleIds) {
+      if (notifyKicked) {
+        this.broadcast(
+          'room-kicked',
+          { reason: 'Eliminado por inactividad (10 s sin recibir datos).' },
+          staleId
+        );
+      }
+      this.closeParticipantConnections(staleId);
+      this.lastSeenMemory.delete(staleId);
+    }
+    const staleSet = new Set(staleIds);
+    room.participants = room.participants.filter((p) => !staleSet.has(p.id));
+    return true;
+  }
+
+  private closeParticipantConnections(participantId: string): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      const attachment = ws.deserializeAttachment() as { participantId?: string } | null;
+      if (attachment?.participantId === participantId) {
+        try {
+          ws.close(1000, 'kicked');
+        } catch {
+          // Ignorar
+        }
+      }
+    }
+    for (const [key, client] of this.sseClients) {
+      if (client.participantId === participantId) {
+        this.closeSseClient(key);
+      }
+    }
+  }
+
+  private async evictParticipant(room: RoomDoc, targetId: string, reason: string): Promise<void> {
+    if (targetId === room.hostId) return;
+    this.broadcast('room-kicked', { reason }, targetId);
+    this.closeParticipantConnections(targetId);
+    this.lastSeenMemory.delete(targetId);
+    room.participants = room.participants.filter((p) => p.id !== targetId);
+    await this.persist(room);
+    await this.scheduleNextAlarm(room);
+    this.broadcast('room-state', this.publicRoom(room));
   }
 
   private async persist(room: RoomDoc): Promise<void> {
@@ -569,6 +867,7 @@ export class RoomDurableObject implements DurableObject {
       for (const track of room.tracks) {
         await this.env.AUDIO.delete(roomAudioKey(room.code, track.id)).catch(() => {});
       }
+      await this.env.AUDIO.delete(roomNowAudioKey(room.code)).catch(() => {});
     }
     for (const ws of this.ctx.getWebSockets()) {
       try {
@@ -580,6 +879,7 @@ export class RoomDurableObject implements DurableObject {
     for (const key of Array.from(this.sseClients.keys())) {
       this.closeSseClient(key);
     }
+    this.lastSeenMemory.clear();
     this.doc = null;
     await this.ctx.storage.deleteAll();
   }
@@ -607,7 +907,13 @@ export class RoomDurableObject implements DurableObject {
         addedAt: t.addedAt,
         hasAudioRelay: t.hasAudioRelay,
       })),
+      playbackQueue: room.playbackQueue ?? [],
       nowPlayingTitle: room.nowPlayingTitle,
+      nowPlayingArtist: room.nowPlayingArtist ?? null,
+      nowPlayingTrackKey: room.nowPlayingTrackKey ?? null,
+      hasLiveAudio: Boolean(room.hasLiveAudio && room.nowPlayingTrackKey),
+      basePositionSec: room.basePositionSec ?? 0,
+      playbackSyncedAtMs: room.playbackSyncedAtMs ?? Date.now(),
       isPlaying: room.isPlaying,
     };
   }
@@ -634,6 +940,10 @@ export class RoomDurableObject implements DurableObject {
 
 function roomAudioKey(code: string, trackId: string): string {
   return `rooms/${code}/${trackId}`;
+}
+
+function roomNowAudioKey(code: string): string {
+  return `rooms/${code}/now-audio`;
 }
 
 function decodeHeader(request: Request, name: string, fallback: string): string {

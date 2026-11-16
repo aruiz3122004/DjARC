@@ -2,18 +2,23 @@
 
 **GradMix** es una Progressive Web App (PWA) de audio diseñada para operar como reproductor continuo de fiestas con transición **Auto-DJ (Equal-Power Crossfade)** en doble deck (`A` / `B`), biblioteca local persistente en **OPFS**, buscador aislado en memoria RAM conectado a catálogo remoto, exportación/importación en `.zip` estándar y salas colaborativas temporales en tiempo real.
 
+Está pensada para **uso personal y grupos pequeños** — una fiesta, una reunión, una sala con amigos — no como plataforma de streaming masivo. Los límites concretos están en [Alcance del Proyecto](#alcance-del-proyecto).
+
 ---
 
 ## Tabla de Contenidos
 
 1. [Stack Tecnológico](#stack-tecnológico)
-2. [Mapa de Arquitectura](#mapa-de-arquitectura)
-3. [Estructura de Carpetas](#estructura-de-carpetas)
-4. [Dónde Tocar Cada Cosa (Guía de Mantenimiento)](#dónde-tocar-cada-cosa-guía-de-mantenimiento)
-5. [Endpoints HTTP, SSE y WebSocket (`gradmix-api` y `/api/catalog`)](#endpoints-http-sse-y-websocket-gradmix-api-y-apicatalog)
-6. [Cómo Correr, Compilar y Probar la App](#cómo-correr-compilar-y-probar-la-app)
-7. [Decisiones Clave de Ingeniería](#decisiones-clave-de-ingeniería)
-8. [Glosario Técnico](#glosario-técnico)
+2. [Alcance del Proyecto](#alcance-del-proyecto)
+3. [Mapa de Arquitectura](#mapa-de-arquitectura)
+4. [Módulos de la Aplicación](#módulos-de-la-aplicación)
+5. [Estructura de Carpetas](#estructura-de-carpetas)
+6. [Dónde Tocar Cada Cosa (Guía de Mantenimiento)](#dónde-tocar-cada-cosa-guía-de-mantenimiento)
+7. [Endpoints HTTP, SSE y WebSocket (`gradmix-api` y `/api/catalog`)](#endpoints-http-sse-y-websocket-gradmix-api-y-apicatalog)
+8. [Cómo Correr, Compilar y Probar la App](#cómo-correr-compilar-y-probar-la-app)
+9. [Decisiones Técnicas y su Porqué](#decisiones-técnicas-y-su-porqué)
+10. [Preguntas y Respuestas](#preguntas-y-respuestas)
+11. [Glosario Técnico](#glosario-técnico)
 
 ---
 
@@ -34,59 +39,107 @@
 
 ---
 
+## Alcance del Proyecto
+
+GradMix resuelve un problema concreto: **poner música en una fiesta con tu propia biblioteca y dejar que los invitados participen sin instalar nada**. Todas las decisiones siguientes se explican por ese objetivo.
+
+### Lo que sí es
+
+- Un reproductor **local-first**: la música vive en el navegador del host, no en un servidor.
+- Un buscador de **catálogo público** (SoundCloud / Audius) para resolver "qué pongo ahora" sin salir de la app.
+- Una forma de **compartir una playlist completa con audio** mediante un link temporal.
+- Una **sala efímera** donde los invitados añaden pistas y controlan al host en tiempo real.
+
+### Lo que no es
+
+- **No compite con YouTube, Spotify o SnapTube.** No hay cuentas, catálogo propio, licencias, recomendaciones ni CDN de audio a escala.
+- **No es multi-tenant ni elástico.** El estado de cada sala vive en un Durable Object y las cachés del catálogo en la memoria de cada instancia; no se comparten entre regiones.
+- **No almacena audio de forma permanente.** Todo lo que sube al servidor caduca: los links a las 24 h y las salas al terminar su duración.
+- **No tiene sistema de usuarios.** La identidad es un `participantId` local; no hay login, recuperación de cuenta ni historial en la nube.
+
+### Límites reales
+
+| Límite | Valor | Dónde se define |
+| :--- | :--- | :--- |
+| Duración de una sala | 0,25 h a 10 h; después expira y borra su audio | `MAX_ROOM_HOURS` en [shared.ts](gradmix-api/src/shared.ts) |
+| Audio por pista subida | 35 MB | `MAX_UPLOAD_BYTES` en [shared.ts](gradmix-api/src/shared.ts) |
+| Pistas por link de playlist | 300 | [bundle.ts](gradmix-api/src/bundle.ts) |
+| Vida de un link de playlist | 24 h (luego se borra el audio de R2) | [bundle.ts](gradmix-api/src/bundle.ts) |
+| Biblioteca local | La cuota que el navegador conceda al origen (uso típico: decenas de GB en escritorio, mucho menos en móvil) | OPFS |
+| Concurrencia | Adecuada para grupos pequeños; sin *sharding* ni réplicas | Cloudflare Workers + DO |
+
+**Costo**: con uso personal, todo cabe en los planes gratuitos de Vercel y Cloudflare. Al crecer, el primer cuello de botella es el almacenamiento de R2 (audio), después las invocaciones del Worker, y más tarde la cuota de OPFS en los dispositivos de los usuarios.
+
+**Qué haría falta para escala tipo Spotify**: autenticación y cuentas, base de datos con índices y réplicas, almacenamiento de objetos con CDN y URLs firmadas, transcodificación por niveles, motor de recomendación, observabilidad y *rate limiting* por usuario. Nada de eso está aquí, y es deliberado: añadirlo multiplicaría el coste y la complejidad sin mejorar el caso de uso real.
+
+---
+
 ## Mapa de Arquitectura
 
-La aplicación sigue una arquitectura **local-first con estado unidireccional en frontend**, un **catálogo serverless en el propio sitio** y un **backend de salas en Cloudflare Workers**:
+La aplicación sigue una arquitectura **local-first con estado unidireccional en frontend**, un **catálogo serverless en el propio sitio** y un **backend de salas en Cloudflare Workers**. En producción el sitio y el API viven en dominios distintos, pero el frontend solo usa rutas relativas:
 
 ```mermaid
 flowchart TB
-    subgraph Client["Cliente PWA (Svelte 5 + Web Audio)"]
-        UI["Vistas UI (App.svelte + components/*)"]
-        IDEM["IdempotentController (locks por acción)"]
-        SEARCH["IsolatedSearchEngine (índice RAM recursivo)"]
-        ENGINE["GradMixAudioEngine (Decks A/B + Crossfade Equal-Power)"]
-        QUEUE["PlaybackQueue (Playlist + upNextQueue + Historial)"]
-        CONT["audioContainer.ts (Inspección DRM / Remux fMP4 a M4A)"]
-        ZIP["zip.ts + bundle.ts (Export/Import ZIP DEFLATE & .gradmix)"]
-        BPM["BpmAnalyzerQueue + bpmWorker.ts"]
-        MEDIA["mediaSession.ts + wakeLock.ts + SW Notifications"]
-        STORE["OPFS (audio binario) + IndexedDB (playlists, pistas, ajustes)"]
+    subgraph Client["Cliente PWA (Svelte 5 + Web Audio) — el navegador del host"]
+        UI["App.svelte (estado y orquestación)"]
+        MOD_PLAYER["Reproductor: PlayerDeck + BottomPlayerBar"]
+        MOD_SEARCH["Buscar: SearchResultsView"]
+        MOD_PL["Playlists: PlaylistManager"]
+        MOD_FAV["Favoritos: FavoritesView"]
+        MOD_MON["Monitoreo: MonitoringView"]
+        MOD_ROOM["Sala: RoomView"]
+        IDEM["IdempotentController"]
+        SEARCH["IsolatedSearchEngine (índice RAM)"]
+        ENGINE["GradMixAudioEngine (Decks A/B + Crossfade)"]
+        QUEUE["PlaybackQueue (playlist + upNext + historial)"]
+        CONT["audioContainer.ts (DRM / remux fMP4→M4A)"]
+        ZIP["zip.ts + bundle.ts (ZIP DEFLATE + .gradmix)"]
+        BPM["BpmAnalyzerQueue + bpmWorker"]
+        MEDIA["MediaSession + wakeLock + SW notifications"]
+        STORE["OPFS (audio) + IndexedDB (pistas, playlists, ajustes)"]
     end
 
-    subgraph Site["Sitio (Vercel; plugin de Vite en dev)"]
-        API_CAT["/api/catalog/* (trending, search, stream + caché RAM)"]
+    subgraph Vercel["Vercel — gradmix.arc03.online"]
+        PWA["PWA estática (dist/ + Service Worker)"]
+        API_CAT["Funciones /api/catalog/* (trending, search, stream + caché RAM)"]
     end
 
-    subgraph Worker["Worker gradmix-api (Cloudflare)"]
-        API_ROOM["/api/rooms/* (HTTP + SSE /events + WebSocket /ws)"]
+    subgraph CF["Cloudflare — api.gradmix.arc03.online"]
+        API_ROOM["/api/rooms/* (HTTP + SSE /events + WS /ws)"]
         API_BND["/api/bundles/* (manifiesto + audio)"]
+        DO_ROOM[("RoomDurableObject (1 por sala)")]
+        DO_BND[("BundleDurableObject (1 por link)")]
         R2[("R2 gradmix-audio")]
     end
 
-    subgraph External["Proveedores Externos"]
+    subgraph External["Proveedores externos"]
         SC["SoundCloud API v2 + CDN HLS"]
         AU["Audius Discovery Hosts"]
     end
 
-    UI --> IDEM
-    IDEM --> ENGINE
-    UI --> SEARCH
+    UI --> MOD_PLAYER & MOD_SEARCH & MOD_PL & MOD_FAV & MOD_MON & MOD_ROOM
+    MOD_PLAYER --> IDEM --> ENGINE
     ENGINE --> QUEUE
     ENGINE --> MEDIA
     ENGINE --> STORE
-    UI --> ZIP
-    ZIP --> CONT
+    MOD_SEARCH --> SEARCH
+    MOD_PL --> ZIP --> CONT
     ZIP --> STORE
     STORE --> BPM
+    UI -->|"mismo origen"| PWA
     UI -->|"/api/catalog/*"| API_CAT
-    UI -->|"/api/bundles/*"| API_BND
-    UI -->|"/api/rooms/* + WS"| API_ROOM
-    API_BND --> R2
-    API_ROOM --> R2
+    MOD_ROOM -->|"/api/rooms/* + WS"| API_ROOM
+    MOD_PL -->|"/api/bundles/*"| API_BND
+    API_ROOM --> DO_ROOM
+    API_BND --> DO_BND
+    DO_ROOM --> R2
+    DO_BND --> R2
     API_CAT --> CONT
     API_CAT --> SC
     API_CAT --> AU
 ```
+
+**En desarrollo** (`npm run dev` + `npm run dev:api`) el diagrama es el mismo salvo dos detalles: el sitio lo sirve Vite en `:5173` y el Worker corre en `127.0.0.1:8787`, proxeado por Vite. No hay implementaciones paralelas.
 
 ### Flujos Críticos de Datos
 
@@ -109,6 +162,26 @@ flowchart TB
 
 5. **Controles fuera del navegador sin VAPID**
    - Combina **Media Session API** (`mediaSession.ts`) para controles nativos en pantalla de bloqueo / panel del SO + una notificación persistente local (`showNotification` vía `ServiceWorkerRegistration`) cuyos botones (`prev`, `toggle`, `next`, `close`) son capturados por [sw-media-controls.js](gradmix-pwa/public/sw-media-controls.js) y reenviados por `postMessage` a `App.svelte`.
+
+6. **Sala colaborativa: el host reproduce, el Worker coordina**
+   - El host abre un WebSocket (con SSE de respaldo) contra el Durable Object de la sala. Cada invitado escribe en el DO; el DO valida permisos, persiste el estado y reemite a todos.
+   - El audio subido por invitados va a R2 y **el host lo descarga una sola vez**; a partir de ahí se marca `hasAudioRelay: false` y los demás no vuelven a bajarlo.
+   - Los comandos (`toggle-play`, `skip-next`, `previous`) viajan como eventos; la reproducción real siempre ocurre en el dispositivo del host.
+
+---
+
+## Módulos de la Aplicación
+
+Cada vista es un componente Svelte que recibe props y emite callbacks; **no hay store global**: `App.svelte` es el único dueño del estado y las vistas son presentacionales.
+
+| Módulo | Qué hace | Cómo funciona | Archivos clave |
+| :--- | :--- | :--- | :--- |
+| **Reproductor** | Cola continua con mezcla entre canciones, sin silencios. | Doble deck (`A`/`B`) sobre Web Audio. Un planificador cada 250 ms precarga la siguiente pista en el deck libre y lanza el crossfade Equal-Power. Las pistas grandes se sirven por `<audio src="blob:">` para sonar al instante. | [audioEngine.ts](gradmix-pwa/src/lib/audio/audioEngine.ts), [queue.ts](gradmix-pwa/src/lib/utils/queue.ts), [PlayerDeck.svelte](gradmix-pwa/src/components/PlayerDeck.svelte) |
+| **Buscar** | Encuentra pistas en tu biblioteca y en el catálogo público, y las añade a la cola o a una playlist. | Índice en RAM construido al arrancar; se teclea sobre memoria, sin tocar IndexedDB. Acepta coincidencias por subsecuencia y acentos. El catálogo remoto se pide a `/api/catalog/search`. | [searchEngine.ts](gradmix-pwa/src/lib/search/searchEngine.ts), [SearchResultsView.svelte](gradmix-pwa/src/components/SearchResultsView.svelte) |
+| **Playlists** | Crear, renombrar, reordenar y compartir listas. | Playlists y orden en IndexedDB; el audio opcional vive en OPFS. Exporta `.zip` (o `.gradmix` con audio) para archivo local y genera un **link temporal** subiendo las pistas a R2 a través de `/api/bundles`. | [PlaylistManager.svelte](gradmix-pwa/src/components/PlaylistManager.svelte), [zip.ts](gradmix-pwa/src/lib/utils/zip.ts), [bundle.ts](gradmix-pwa/src/lib/utils/bundle.ts) |
+| **Favoritos** | Marcar canciones y reproducirlas todas de una vez. | Es un booleano `favorite` dentro del registro de la pista; la vista filtra en memoria y "reproducir todo" crea una cola con esas pistas. No hay tabla aparte. | [FavoritesView.svelte](gradmix-pwa/src/components/FavoritesView.svelte), `handleToggleFavorite` en [App.svelte](gradmix-pwa/src/App.svelte) |
+| **Monitoreo** | Ver cuánto espacio ocupa la biblioteca y limpiarla. | Consulta `navigator.storage.estimate()` para uso/cuota de OPFS, muestra el estado de los decks y ofrece vaciado completo (audio + metadatos) con confirmación. | [MonitoringView.svelte](gradmix-pwa/src/components/MonitoringView.svelte), [opfsStorage.ts](gradmix-pwa/src/lib/storage/opfsStorage.ts) |
+| **Sala** | Fiesta colaborativa: invitados añaden pistas y controlan al host. | El host crea la sala con código y clave; los invitados entran con código+clave o link con `inviteToken`. El anfitrión concede permisos (`canSkip`, `canPause`, `canAdd`, `canRemove`). Todo se sincroniza por WebSocket/SSE contra un Durable Object. | [RoomView.svelte](gradmix-pwa/src/components/RoomView.svelte), [room.ts](gradmix-api/src/room.ts), [index.ts](gradmix-api/src/index.ts) |
 
 ---
 
@@ -200,6 +273,7 @@ DjARC/
 | **Barra inferior desplegable (título, pausa, siguiente, cola)** | [BottomPlayerBar.svelte](gradmix-pwa/src/components/BottomPlayerBar.svelte) | Props `upNextTracks`, `hasPlaylistInPlayback`, `onRequestAddToPlaylist`. |
 | **Reproductor principal y controles de transporte** | [PlayerDeck.svelte](gradmix-pwa/src/components/PlayerDeck.svelte) | Botones de transporte, barra seek, favoritos y botón de añadir a playlist. |
 | **Playlists (subida, renombrado, envío por WhatsApp, `.zip` y links)** | [PlaylistManager.svelte](gradmix-pwa/src/components/PlaylistManager.svelte) | `onExportBundleFile`, `onExportBundleLink`, `onImportFromFile`, `onImportFromLink`, `onQueueNextTrack`. |
+| **Favoritos (marcar, listar, reproducir todo)** | [FavoritesView.svelte](gradmix-pwa/src/components/FavoritesView.svelte) y [App.svelte](gradmix-pwa/src/App.svelte) | `handleToggleFavorite`, `handlePlayAllFavorites`, `favoriteTracks` (`$derived` sobre `tracks`). |
 | **Compresión `.zip` y lectura/extracción `.zip`** | [zip.ts](gradmix-pwa/src/lib/utils/zip.ts) y [bundle.ts](gradmix-pwa/src/lib/utils/bundle.ts) | `buildZipBlobFromEntries`, `parsePlaylistZipFile`, `buildPlaylistZipBlob`, `buildGradmixBundleBlob`. |
 | **Reparación de `.m4a` fragmentados, filtros DRM o formatos** | [audioContainer.ts](gradmix-pwa/src/lib/audio/audioContainer.ts) y [format.ts](gradmix-pwa/src/lib/utils/format.ts) | `inspectAudioContainer`, `remuxFragmentedMp4ToStandardM4a`, `extractAdtsFromFragmentedMp4`, `orderSoundCloudTranscodings`. |
 | **Buscador instantáneo (local + catálogo)** | [searchEngine.ts](gradmix-pwa/src/lib/search/searchEngine.ts) y [SearchResultsView.svelte](gradmix-pwa/src/components/SearchResultsView.svelte) | `IsolatedSearchEngine`, `normalizeSearchText`, `recursiveSubsequenceScore`. |
@@ -302,12 +376,80 @@ npx cap sync
 
 ---
 
-## Decisiones Clave de Ingeniería
+## Decisiones Técnicas y su Porqué
 
-- **Evitar bucles reactivos en Svelte 5:** En [App.svelte](gradmix-pwa/src/App.svelte), el `$effect` que llama a `engine.syncLibrary(...)` lee `engineSnapshot.currentTrackId` dentro de `untrack(...)` porque `syncLibrary` vuelve a emitir `engineSnapshot`; omitir `untrack` dispararía `effect_update_depth_exceeded`.
-- **Cero bloqueo de UI en carga inicial de pistas:** Decodificar por completo un MP3/M4A de varios megabytes vía `AudioContext.decodeAudioData()` introduce segundos de espera en móvil. Por eso `prepareDeckMedia()` usa `<audio>` en streaming para pistas `> 1.5 MB` y reserva la decodificación PCM en memoria como respaldo o para pistas cortas.
-- **Compatibilidad universal del `.m4a` exportado:** El remuxer de `audioContainer.ts` reescribe encabezados `moov`/`mvhd`/`stbl` sin recodificar muestras AAC, corrigiendo duraciones corruptas en reproductores externos y respetando el audio original sin pérdida de calidad.
-- **Resiliencia en OPFS + IndexedDB:** La metadata vive en IndexedDB y los archivos binarios en OPFS. Si el almacenamiento se acerca al 80% de cuota se alerta al usuario y se ofrece vaciado completo desde Monitoreo.
+Cada decisión incluye el motivo y, cuando aplica, el coste que aceptamos a cambio.
+
+### Producto y arquitectura
+
+- **Local-first, sin cuentas.** La biblioteca vive en el dispositivo del host: no hay subida masiva, no hay login y la app abre sin red. Coste aceptado: si el usuario limpia los datos del navegador, pierde su música (de ahí la exportación `.zip`).
+- **Dos backends con ciclos de vida distintos.** El catálogo es HTTP sin estado y se cachea bien en funciones serverless de Vercel (mismo origen del sitio, cero CORS). Las salas necesitan estado consistente, WebSocket y almacenamiento de objetos, y eso encaja mejor en un Worker con Durable Objects + R2. Coste: dos despliegues en lugar de uno.
+- **Un solo backend en desarrollo.** Vite proxea `/api/rooms` y `/api/bundles` al Worker local en vez de reimplementarlos. Se eliminaron ~1.500 líneas duplicadas. Coste: hay que arrancar el Worker (`npm run dev:api`) para probar salas.
+- **Svelte 5 en vez de React.** Se compila a JavaScript imperativo sin runtime de reconciliación, lo que importa en un dispositivo reproduciendo audio. Las runas (`$state`, `$derived`, `$effect`) sustituyen a los stores. Coste: menos ecosistema de componentes; la UI es propia.
+- **Cuidado con los bucles reactivos.** El `$effect` que llama a `engine.syncLibrary()` lee `engineSnapshot.currentTrackId` dentro de `untrack()` porque `syncLibrary` vuelve a emitir el snapshot; sin eso, Svelte lanzaría `effect_update_depth_exceeded`. Es el patrón a respetar al tocar `App.svelte`.
+- **Tailwind v4 sin kit de componentes.** Interfaz rectangular a medida, CSS pequeño y control total del modo OLED. Coste: más markup escrito a mano.
+
+### Audio
+
+- **Streaming antes que decodificar.** Para pistas de más de 1.5 MB, el deck arranca con `<audio src="blob:">` y `decodeAudioData()` queda como respaldo. Decodificar 8 MB en un móvil son segundos de espera antes del primer sonido. Coste: se pierde el análisis PCM previo en esas pistas.
+- **Remux, no recodificación.** `remuxFragmentedMp4ToStandardM4a()` reescribe contenedores y cabeceras sin tocar las muestras AAC: corrige duraciones absurdas de fMP4 y mantiene la calidad bit a bit. Coste: implementación propia y sensible al formato de origen.
+- **Crossfade Equal-Power con dos decks.** `cos`/`sin` mantienen la energía percibida constante durante la transición; un solo elemento `<audio>` no permite solapar dos canciones. Coste: dos fuentes de audio y un planificador que debe precargar a tiempo.
+- **BPM en un Web Worker.** El análisis es costoso y bloquea el hilo principal; se mueve a una cola secuencial en segundo plano. Coste: el BPM no está disponible en el instante en que se añade la pista.
+
+### Datos
+
+- **OPFS para audio, IndexedDB para metadatos.** Los binarios no caben en IndexedDB sin degradar el rendimiento, y OPFS está pensado para archivos grandes. IndexedDB sigue siendo cómodo para consultar pistas, playlists y ajustes. Coste: dos mecanismos de persistencia que hay que mantener coherentes (con respaldo de IDB si OPFS falla).
+- **Sin base de datos en el servidor.** Nada del catálogo ni de la biblioteca se guarda en backend; lo que se persiste es efímero (salas y links) y vive en el storage del Durable Object o en R2. Coste: no hay historial entre dispositivos.
+- **Aviso al 80% de cuota.** `App.svelte` vigila `storagePercent` y avisa antes de que el navegador rechace escrituras; Monitoreo ofrece el vaciado completo. Coste: el umbral es heurístico, no una garantía de que quede espacio.
+- **Idempotencia en el cliente.** `IdempotentController` bloquea por clave de operación para que un doble toque no cree dos salas ni suba dos veces la misma pista. Coste: una capa extra de estado en `App.svelte`.
+- **Exportación `.zip` estándar.** Formatos abiertos garantizan que el usuario pueda sacar su música a cualquier reproductor. `CompressionStream('deflate-raw')` evita dependencias de compresión. Coste: comprimir en el hilo de UI (se hace por canciones, no de golpe).
+
+### Infraestructura
+
+- **Durable Objects para las salas.** Un DO por sala serializa las escrituras (permisos, cola, comandos) sin condiciones de carrera y mantiene el WebSocket en un único punto. KV es eventualmente consistente y D1 añadiría esquema y operación para datos que duran horas. Coste: acoplarse a Cloudflare y pagar por duración de DO.
+- **R2 en lugar de retransmitir audio por el Worker.** El host descarga el audio una sola vez y el resto de la sala no lo vuelve a pedir. Un Worker tiene 128 MB de memoria y no debe proxyar archivos de 35 MB. Coste: el primer ingreso lo paga el host.
+- **TTL con alarmas del Durable Object.** Salas y links se autodestruyen solos: no hace falta un cron de limpieza ni una tabla de expirados. Coste: si la alarma falla, el objeto queda huérfano hasta la siguiente lectura.
+- **PBKDF2-SHA256 a 12.000 iteraciones.** Disponible en WebCrypto sin dependencias WASM, suficiente para una clave de sala que vive 10 h como máximo. No se usa para contraseñas de cuentas porque no existen cuentas. Coste: si algún día hay credenciales reales, habrá que subir el coste o cambiar a Argon2.
+- **Sin VAPID ni servidor Push.** Media Session + una notificación local del Service Worker dan los controles en pantalla de bloqueo sin gestionar suscripciones. Coste: no hay notificaciones si la app está completamente cerrada.
+- **Cachés en memoria en `/api/catalog`.** Evitan quemar el rate limit de SoundCloud y aceleran repeticiones. Coste: cada instancia tiene su propia caché (sin invalidación global) y el primer request tras un arranque en frío es lento.
+
+### Alternativas descartadas
+
+- **Firebase / Supabase** para salas: exigirían cuentas, reglas de seguridad y un esquema para datos que caducan en horas. El Durable Object ya da consistencia y WebSocket.
+- **Next.js**: GradMix es una SPA con dos funciones serverless; el framework añadiría servidor, routing y peso sin resolver nada del caso de uso.
+- **Un servidor Node propio** (el antiguo plugin de Vite): no escala a cero, exige mantener una máquina y duplicaba el backend real.
+- **App nativa con Capacitor**: la configuración existe, pero la PWA cubre el objetivo y evita publicar en tiendas. Es una vía abierta, no el camino principal.
+
+---
+
+## Preguntas y Respuestas
+
+**¿Necesito crear una cuenta?**
+No. No hay registro ni login; tu identidad en una sala es un identificador generado en el navegador.
+
+**¿Dónde se guarda mi música?**
+En tu dispositivo, en el almacenamiento privado del navegador (OPFS + IndexedDB). No se sube a ningún servidor salvo que compartas un link de playlist o una sala, y en ese caso caduca.
+
+**¿Qué pasa si borro los datos del navegador?**
+Se pierde la biblioteca local. Exporta tus playlists a `.zip` antes de limpiar el sitio o de cambiar de dispositivo.
+
+**¿Por qué una canción del catálogo dura 300 horas o no suena?**
+Suele ser un stream `fMP4` con la duración mal declarada o una pista con DRM. El backend descarta las cifradas y remuxa las fragmentadas a `.m4a` estándar; si aun así falla, la pista no es reproducible.
+
+**¿La sala sigue sonando si el host cierra el móvil?**
+No. El anfitrión es quien reproduce; la sala y su cola siguen existiendo hasta que expira, pero sin host no hay audio. Al volver, retoma el estado guardado en el Durable Object.
+
+**¿Funciona sin internet?**
+La interfaz, tu biblioteca local y la reproducción sí (Service Worker + OPFS). El catálogo remoto, los links de playlist y las salas necesitan conexión.
+
+**¿Funciona en iPhone?**
+Sí para reproducir y entrar a salas, pero iOS es más agresivo liberando almacenamiento: instala la PWA en la pantalla de inicio y mantén un `.zip` de respaldo.
+
+**¿Es legal descargar música de SoundCloud o Audius con esto?**
+GradMix no aloja catálogo: reproduce mediante las APIs públicas de cada servicio. Úsalo con contenido al que tengas derecho y respeta sus términos; la responsabilidad del uso es del usuario.
+
+**¿Cuánto cuesta mantenerlo?**
+Con uso personal, los planes gratuitos de Vercel y Cloudflare son suficientes. El primer gasto real sería el almacenamiento de audio en R2 si se comparten links grandes con frecuencia.
 
 ---
 

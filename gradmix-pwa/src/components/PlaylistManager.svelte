@@ -52,6 +52,7 @@
     onImportFromLink: (linkOrCode: string) => void;
     onImportFromFile: (file: File) => void;
     onQueueNextTrack?: (trackId: string) => void;
+    onPlayPlaylist?: (playlistId: string) => void;
   }
 
   let {
@@ -87,6 +88,7 @@
     onImportFromLink,
     onImportFromFile,
     onQueueNextTrack,
+    onPlayPlaylist,
   }: Props = $props();
 
   let searchQuery = $state('');
@@ -519,6 +521,26 @@
             </button>
 
             <div class="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                onclick={() => {
+                  if (onPlayPlaylist) {
+                    onPlayPlaylist(pl.id);
+                  } else if (plTracks.length > 0) {
+                    onSelectPlaylist(pl.id);
+                    onPlayTrack(plTracks[0].id, 0);
+                  }
+                }}
+                disabled={actionBusy || plTracks.length === 0}
+                title="Reproducir playlist"
+                aria-label="Reproducir playlist"
+                class="flex h-7 w-7 items-center justify-center bg-zinc-900 text-white transition hover:bg-zinc-800 active:scale-95 disabled:opacity-35 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
+              >
+                <svg class="h-3.5 w-3.5 translate-x-[0.5px]" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </button>
+
               <button
                 type="button"
                 onclick={() => startRenamePlaylist(pl)}

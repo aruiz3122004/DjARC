@@ -19,6 +19,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   masterVolume: 0.92,
   activePlaylistId: DEFAULT_PLAYLIST_ID,
   theme: 'dark',
+  storageMode: 'browser',
+  storage90Declined: false,
+  deviceStorageName: '',
 };
 
 export function createDefaultPlaylists(): Playlist[] {

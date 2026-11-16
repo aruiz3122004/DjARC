@@ -30,6 +30,7 @@
     { id: 'favorites', label: 'Favoritos' },
     { id: 'monitoring', label: 'Monitoreo' },
     { id: 'room', label: 'Sala' },
+    { id: 'faq', label: 'Preguntas frecuentes' },
   ];
 
   function select(id: AppModule) {
@@ -112,11 +113,17 @@
             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M3 12h4l3-7 4 14 3-7h4" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
-          {:else}
+          {:else if item.id === 'room'}
             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke-linecap="round" />
               <circle cx="9" cy="7" r="4" />
               <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke-linecap="round" />
+            </svg>
+          {:else}
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M9.5 9.5a2.5 2.5 0 0 1 4.6 1.3c0 1.6-2.1 2.1-2.1 3.4" stroke-linecap="round" />
+              <circle cx="12" cy="17.2" r="0.8" fill="currentColor" stroke="none" />
             </svg>
           {/if}
           <span>{item.label}</span>

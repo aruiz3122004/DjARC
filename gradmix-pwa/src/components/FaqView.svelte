@@ -36,6 +36,14 @@
         'GradMix alterna automáticamente entre Deck A y Deck B para realizar mezclas sin silencios. Puedes elegir la duración del crossfade (4s, 8s o 12s) y dejar activado Auto-DJ para que la siguiente canción de la cola entre de forma continua antes de terminar la actual.',
     },
     {
+      id: 'usage-install-pwa',
+      topic: 'usage',
+      category: 'USO GENERAL · INSTALAR EN CELULAR (PWA)',
+      question: '¿Cómo instalo GradMix como aplicación real en Android o iPhone?',
+      answer:
+        'En Android Chrome, pulsa el botón "Instalar App" dentro de la app (o abre el menú ⋮ de Chrome y elige "Instalar aplicación" / "Añadir a pantalla de inicio → Instalar"; evita el ícono de flecha ↓ "Descargar página", ya que eso solo guarda una copia estática sin conexión). En iPhone/iPad abre gradmix.arc03.online en Safari, pulsa Compartir → "Añadir a pantalla de inicio".',
+    },
+    {
       id: 'usage-formats-export',
       topic: 'usage',
       category: 'USO GENERAL · FORMATOS Y RESPALDO',
@@ -50,6 +58,22 @@
       question: '¿Para qué sirve el botón Ahorro (Modo Blackout)?',
       answer:
         'El modo Ahorro oscurece/bloquea temporalmente la pantalla para reducir consumo energético y evitar toques accidentales durante una fiesta o presentación, mientras el audio continúa reproduciéndose sin interrupciones.',
+    },
+    {
+      id: 'licenses-open-source',
+      topic: 'licenses',
+      category: 'CÓDIGO ABIERTO · PROYECTO',
+      question: '¿GradMix es de código abierto y gratuito?',
+      answer:
+        'Sí. GradMix es una aplicación 100% de código abierto (open source) y gratuita: cualquiera puede auditar el código fuente completo del cliente PWA y del Worker de salas en GitHub (aruiz3122004/DjARC) para comprobar cómo se procesa el audio, el almacenamiento y la seguridad.',
+    },
+    {
+      id: 'licenses-user-data',
+      topic: 'licenses',
+      category: 'PRIVACIDAD · DATOS DEL USUARIO',
+      question: '¿Qué información del usuario recopila la aplicación?',
+      answer:
+        'GradMix no recopila ni vende información personal: no pide registro, correo ni teléfono, ni usa trackers o analíticas externas. Tu música, playlists y ajustes viven únicamente en tu dispositivo (OPFS/IndexedDB o carpeta autorizada). Solo si entras a una Sala colaborativa, se genera un ID técnico aleatorio en tu navegador y se comparte temporalmente el nombre que escribas para la sala y las canciones enviadas allí, eliminándose automáticamente al cerrar o expirar la sala.',
     },
     {
       id: 'licenses-catalog',
@@ -136,7 +160,7 @@
       Preguntas y Respuestas
     </h2>
     <p class="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-      Guía rápida sobre uso de la app, licencias musicales, salas colaborativas y almacenamiento local.
+      Aplicación de código abierto: guía rápida sobre uso, privacidad, licencias musicales, salas colaborativas y almacenamiento local.
     </p>
   </div>
 

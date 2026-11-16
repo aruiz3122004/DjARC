@@ -35,6 +35,7 @@
   import {
     buildSafeOpfsKey,
     clearAllAudioFiles,
+    clearDeviceDirectorySelection,
     deleteAudioFile,
     getDeviceDirectoryHandle,
     getDeviceStorageInfo,
@@ -100,6 +101,12 @@
     persisted: false,
   });
   let deviceStorageInfo = $state<DeviceStorageInfo | null>(null);
+
+  interface BeforeInstallPromptEvent extends Event {
+    prompt: () => Promise<void>;
+    userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+  }
+  let deferredInstallPrompt = $state<BeforeInstallPromptEvent | null>(null);
 
   let importing = $state(false);
   let importProgress = $state<{ done: number; total: number } | null>(null);
@@ -632,9 +639,52 @@
     }
   }
 
-  function handleUseBrowserStorage() {
-    persistSettings({ storageMode: 'browser' });
-    showToast('Las nuevas descargas volverán al almacenamiento del navegador (OPFS).');
+  async function handleRevokeDeviceStorageAccess() {
+    await clearDeviceDirectorySelection();
+    persistSettings({
+      storageMode: 'browser',
+      deviceStorageName: '',
+    });
+    deviceStorageInfo = null;
+    await refreshStorageInfo();
+    showToast(
+      'Acceso al almacenamiento interno eliminado. Las nuevas descargas volverán al almacenamiento del navegador.'
+    );
+  }
+
+  function allocateTrackStorageKey(
+    id: string,
+    fileName: string,
+    preferredTitle?: string,
+    extraKeys?: Set<string>
+  ): string {
+    const used = new Set(tracks.map((t) => t.opfsKey));
+    if (extraKeys) {
+      for (const k of extraKeys) used.add(k);
+    }
+    const key = buildSafeOpfsKey(
+      id,
+      fileName,
+      settings.storageMode ?? 'browser',
+      preferredTitle,
+      used
+    );
+    if (extraKeys) extraKeys.add(key);
+    return key;
+  }
+
+  async function handleInstallPwa() {
+    const ev = deferredInstallPrompt;
+    if (!ev) return;
+    try {
+      await ev.prompt();
+      const choice = await ev.userChoice;
+      if (choice.outcome === 'accepted') {
+        deferredInstallPrompt = null;
+      }
+    } catch {
+      // Ignorar cancelación del prompt de instalación
+    }
   }
 
   function handleDecline90StorageSwitch() {
@@ -941,7 +991,11 @@
             }
 
             const id = generateTrackId();
-            const opfsKey = buildSafeOpfsKey(id, file.name, settings.storageMode ?? 'browser');
+            const label =
+              item.artist && !item.title.toLowerCase().includes(item.artist.toLowerCase())
+                ? `${item.artist} - ${item.title}`
+                : item.title;
+            const opfsKey = allocateTrackStorageKey(id, file.name, label);
             await saveAudioFile(opfsKey, file);
 
             const newTrack: Track = {
@@ -1062,7 +1116,7 @@
                 type: inferAudioMimeType(track.fileName, blob.type || track.mimeType),
               });
         const id = generateTrackId();
-        const opfsKey = buildSafeOpfsKey(id, file.name, settings.storageMode ?? 'browser');
+        const opfsKey = allocateTrackStorageKey(id, file.name, cleanTitle);
         await saveAudioFile(opfsKey, file);
 
         const newTrack: Track = {
@@ -1144,8 +1198,17 @@
         void refreshRoomSnapshot(activeRoomSession.code, activeRoomSession.participantId);
       }
     };
+    const handleBeforeInstallPrompt = (ev: Event) => {
+      ev.preventDefault();
+      deferredInstallPrompt = ev as BeforeInstallPromptEvent;
+    };
+    const handleAppInstalled = () => {
+      deferredInstallPrompt = null;
+    };
     window.addEventListener('popstate', handleRoomBackPopstate);
     window.addEventListener('beforeunload', handleRoomBeforeUnload);
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
     document.addEventListener('visibilitychange', handleRoomVisibilityCheck);
 
     void (async () => {
@@ -1205,6 +1268,8 @@
       window.removeEventListener('keydown', handleFirstGesture);
       window.removeEventListener('popstate', handleRoomBackPopstate);
       window.removeEventListener('beforeunload', handleRoomBeforeUnload);
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
       document.removeEventListener('visibilitychange', handleRoomVisibilityCheck);
       teardownGuestRoomAudio();
     };
@@ -1288,6 +1353,7 @@
     const targetBlock: PartyBlock = targetPlaylistObj?.block ?? 'Fiesta Principal';
     const BATCH_SIZE = 5;
     let totalAdded = 0;
+    const batchKeys = new Set<string>();
 
     for (let start = 0; start < audioFiles.length; start += BATCH_SIZE) {
       const batch = audioFiles.slice(start, start + BATCH_SIZE);
@@ -1295,11 +1361,11 @@
       const results = await Promise.allSettled(
         batch.map(async (file, offset): Promise<Track> => {
           const id = generateTrackId();
-          const opfsKey = buildSafeOpfsKey(id, file.name, settings.storageMode ?? 'browser');
           const parsed = parseTrackFilename(file.name);
           const tags = await extractAudioTags(file);
           const title = cleanDisplayTitle(tags.title || parsed.title) || parsed.title;
           const artist = cleanDisplayArtist(tags.artist || parsed.artist);
+          const opfsKey = allocateTrackStorageKey(id, file.name, title, batchKeys);
           const mimeType = inferAudioMimeType(file.name, file.type);
 
           await saveAudioFile(opfsKey, file);
@@ -1647,7 +1713,7 @@
           type: item.mimeType || 'audio/mpeg',
         });
         const id = generateTrackId();
-        const opfsKey = buildSafeOpfsKey(id, file.name, settings.storageMode ?? 'browser');
+        const opfsKey = allocateTrackStorageKey(id, file.name, item.title);
         await saveAudioFile(opfsKey, file);
 
         const trk: Track = {
@@ -2195,7 +2261,7 @@
       });
 
       const localId = generateTrackId();
-      const opfsKey = buildSafeOpfsKey(localId, file.name, settings.storageMode ?? 'browser');
+      const opfsKey = allocateTrackStorageKey(localId, file.name, info.title);
       await saveAudioFile(opfsKey, file);
 
       const newTrack: Track = {
@@ -2692,6 +2758,7 @@
     theme={settings.theme}
     favoritesCount={favoriteTracks.length}
     roomActive={room !== null}
+    canInstallPwa={deferredInstallPrompt !== null}
     onSelectModule={(mod) => {
       activeModule = mod;
       if (mod === 'search' && audiusResults.length === 0 && !audiusLoading) {
@@ -2700,6 +2767,7 @@
     }}
     onCloseMobile={() => (mobileMenuOpen = false)}
     onToggleTheme={handleToggleTheme}
+    onInstallPwa={() => void handleInstallPwa()}
   />
 
   <div class="flex min-w-0 flex-1 flex-col">
@@ -2723,6 +2791,20 @@
           <h1 class="text-sm font-semibold tracking-tight text-zinc-900 dark:text-white">
             GradMix
           </h1>
+          {#if deferredInstallPrompt}
+            <button
+              type="button"
+              onclick={() => void handleInstallPwa()}
+              class="inline-flex items-center gap-1 border border-cyan-500/60 bg-cyan-500/15 px-2 py-1 text-[11px] font-semibold text-cyan-700 transition hover:bg-cyan-500/25 dark:text-cyan-300 lg:hidden"
+              title="Instalar GradMix como aplicación"
+            >
+              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 3v12m0 0l-4-4m4 4l4-4" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
+              </svg>
+              <span>Instalar</span>
+            </button>
+          {/if}
         </div>
 
         <!-- Barra de búsqueda general en Navbar -->
@@ -3021,7 +3103,7 @@
           playlistsCount={playlists.length}
           onRefresh={refreshStorageInfo}
           onSwitchStorage={handleSwitchToDeviceStorage}
-          onUseBrowserStorage={handleUseBrowserStorage}
+          onRevokeDeviceStorage={handleRevokeDeviceStorageAccess}
           onClearDatabase={handleClearLocalDatabase}
         />
       {:else if activeModule === 'room'}

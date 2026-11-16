@@ -16,7 +16,7 @@
     playlistsCount: number;
     onRefresh: () => void;
     onSwitchStorage?: () => Promise<void> | void;
-    onUseBrowserStorage?: () => void;
+    onRevokeDeviceStorage?: () => Promise<void> | void;
     onClearDatabase: () => Promise<void> | void;
   }
 
@@ -31,7 +31,7 @@
     playlistsCount,
     onRefresh,
     onSwitchStorage,
-    onUseBrowserStorage,
+    onRevokeDeviceStorage,
     onClearDatabase,
   }: Props = $props();
 
@@ -253,39 +253,27 @@
       </div>
     </div>
 
-    {#if storageMode === 'device' || deviceStorageInfo || deviceTracksCount > 0}
-      {@const folderTitle = deviceStorageInfo?.folderName || deviceStorageName || 'Carpeta local'}
-      {@const deviceActive = storageMode === 'device'}
+    {#if storageMode === 'device' || deviceStorageInfo !== null}
       {@const permGranted = deviceStorageInfo?.permissionState === 'granted'}
       <div class="mt-3 border border-cyan-500/40 bg-cyan-50/30 p-3.5 dark:border-cyan-900/60 dark:bg-zinc-950">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
-            <svg class="h-4 w-4 text-cyan-600 dark:text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path
-                d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-            <div>
-              <p class="text-[11px] font-semibold uppercase tracking-wider text-cyan-700 dark:text-cyan-400">
-                Almacenamiento Interno del Dispositivo · {folderTitle}
-              </p>
-              <p class="mt-0.5 tabular-nums text-sm font-semibold text-zinc-900 dark:text-white">
-                {permGranted && deviceStorageInfo
-                  ? `${formatBytes(deviceStorageInfo.usedBytes)} usados en la carpeta`
-                  : 'Carpeta autorizada (toca para verificar permiso)'}
-              </p>
-            </div>
+        <div class="flex items-center gap-2">
+          <svg class="h-4 w-4 text-cyan-600 dark:text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path
+              d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <div>
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-cyan-700 dark:text-cyan-400">
+              Almacenamiento Interno del Dispositivo
+            </p>
+            <p class="mt-0.5 tabular-nums text-sm font-semibold text-zinc-900 dark:text-white">
+              {permGranted && deviceStorageInfo
+                ? `${formatBytes(deviceStorageInfo.usedBytes)} usados en la carpeta`
+                : 'Carpeta autorizada (toca para verificar permiso)'}
+            </p>
           </div>
-
-          <span
-            class="border px-2 py-1 text-[11px] font-medium {deviceActive
-              ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-800 dark:text-cyan-300'
-              : 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-black dark:text-zinc-400'}"
-          >
-            {deviceActive ? 'Activo · Aparte de los 10 GB OPFS' : 'En espera (OPFS activo)'}
-          </span>
         </div>
 
         <p class="mt-2 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-300">
@@ -297,17 +285,11 @@
         </p>
 
         <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex gap-4 tabular-nums text-xs text-zinc-500 dark:text-zinc-400">
+          <div class="tabular-nums text-xs text-zinc-500 dark:text-zinc-400">
             <span>
               Pistas en almacenamiento interno:
               <strong class="text-zinc-800 dark:text-zinc-200">{deviceTracksCount}</strong>
             </span>
-            {#if permGranted && deviceStorageInfo}
-              <span>
-                Archivos en carpeta:
-                <strong class="text-zinc-800 dark:text-zinc-200">{deviceStorageInfo.fileCount}</strong>
-              </span>
-            {/if}
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
@@ -320,13 +302,13 @@
                 {permGranted ? 'Cambiar carpeta' : 'Autorizar / Reabrir carpeta'}
               </button>
             {/if}
-            {#if deviceActive && onUseBrowserStorage}
+            {#if onRevokeDeviceStorage}
               <button
                 type="button"
-                onclick={onUseBrowserStorage}
-                class="border border-zinc-300 bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-200 dark:border-zinc-800 dark:bg-black dark:text-zinc-300 dark:hover:bg-zinc-900"
+                onclick={() => onRevokeDeviceStorage()}
+                class="border border-red-800 bg-red-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-800"
               >
-                Usar navegador (OPFS)
+                Eliminar acceso
               </button>
             {/if}
           </div>

@@ -7,9 +7,11 @@
     theme: ThemeMode;
     favoritesCount: number;
     roomActive: boolean;
+    canInstallPwa?: boolean;
     onSelectModule: (mod: AppModule) => void;
     onCloseMobile: () => void;
     onToggleTheme: () => void;
+    onInstallPwa?: () => void;
   }
 
   let {
@@ -18,9 +20,11 @@
     theme,
     favoritesCount,
     roomActive,
+    canInstallPwa = false,
     onSelectModule,
     onCloseMobile,
     onToggleTheme,
+    onInstallPwa,
   }: Props = $props();
 
   const items: Array<{ id: AppModule; label: string }> = [
@@ -138,8 +142,27 @@
     {/each}
   </nav>
 
-  <!-- Cambio de tema Claro / Oscuro OLED -->
-  <div class="border-t border-zinc-200 pt-3 dark:border-zinc-900">
+  <!-- Instalar PWA + Cambio de tema Claro / Oscuro OLED -->
+  <div class="space-y-1 border-t border-zinc-200 pt-3 dark:border-zinc-900">
+    {#if canInstallPwa && onInstallPwa}
+      <button
+        type="button"
+        onclick={() => {
+          onInstallPwa();
+          onCloseMobile();
+        }}
+        class="flex w-full items-center justify-between bg-cyan-500/15 px-3 py-2 text-xs font-semibold text-cyan-700 transition hover:bg-cyan-500/25 dark:text-cyan-300"
+      >
+        <span class="flex items-center gap-2.5">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 3v12m0 0l-4-4m4 4l4-4" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
+          </svg>
+          <span>Instalar App</span>
+        </span>
+      </button>
+    {/if}
+
     <button
       type="button"
       onclick={onToggleTheme}

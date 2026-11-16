@@ -432,14 +432,39 @@ export async function getStorageUsage(): Promise<StorageUsageInfo> {
   return { supportedOpfs, usageBytes, quotaBytes, persisted };
 }
 
+function sanitizeDeviceFileStem(raw: string): string {
+  return raw
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[. ]+$/g, '')
+    .trim()
+    .slice(0, 120);
+}
+
 export function buildSafeOpfsKey(
   id: string,
   originalFileName: string,
-  storageMode: 'browser' | 'device' = 'browser'
+  storageMode: 'browser' | 'device' = 'browser',
+  preferredTitle?: string,
+  existingKeys?: ReadonlySet<string>
 ): string {
   const extMatch = originalFileName
     .toLowerCase()
     .match(/\.(mp3|wav|wave|m4a|m4b|m4p|m4r|mp4|aac|ogg|oga|opus|flac|webm|weba|3gp|3gpp|amr|aif|aiff|aifc|caf|wma|alac|ac3|mka)$/);
   const ext = extMatch ? extMatch[0] : '.audio';
-  return storageMode === 'device' ? `${DEVFS_PREFIX}${id}${ext}` : `${id}${ext}`;
+  if (storageMode !== 'device') {
+    return `${id}${ext}`;
+  }
+
+  const rawWithoutExt = originalFileName.replace(/\.[^./\\]+$/, '');
+  const base =
+    sanitizeDeviceFileStem(preferredTitle ?? '') ||
+    sanitizeDeviceFileStem(rawWithoutExt) ||
+    id;
+
+  let candidate = `${DEVFS_PREFIX}${base}${ext}`;
+  if (existingKeys && existingKeys.has(candidate)) {
+    candidate = `${DEVFS_PREFIX}${base}-${id.slice(0, 4)}${ext}`;
+  }
+  return candidate;
 }

@@ -80,6 +80,66 @@ export async function pickDeviceStorageDirectory(): Promise<{ name: string }> {
   return { name: handle.name || 'Almacenamiento interno' };
 }
 
+export function isDeviceAudioKey(opfsKey: string): boolean {
+  return opfsKey.startsWith(DEVFS_PREFIX);
+}
+
+export interface DeviceStorageInfo {
+  folderName: string;
+  fileCount: number;
+  usedBytes: number;
+  permissionState: 'granted' | 'prompt' | 'denied' | 'none';
+}
+
+export async function getDeviceStorageInfo(): Promise<DeviceStorageInfo | null> {
+  const handle =
+    cachedDeviceDir ?? ((await get<DeviceDirHandleLike>(DEVICE_FS_KEY, deviceFsStore)) ?? null);
+  if (!handle) return null;
+  cachedDeviceDir = handle;
+
+  let permissionState: 'granted' | 'prompt' | 'denied' | 'none' = 'granted';
+  try {
+    if (typeof handle.queryPermission === 'function') {
+      const q = await handle.queryPermission({ mode: 'read' });
+      permissionState = q;
+    }
+  } catch {
+    permissionState = 'none';
+  }
+
+  let fileCount = 0;
+  let usedBytes = 0;
+  if (permissionState === 'granted') {
+    try {
+      const iterable = handle as unknown as {
+        values?: () => AsyncIterable<FileSystemHandle>;
+      };
+      if (typeof iterable.values === 'function') {
+        for await (const entry of iterable.values()) {
+          if (entry.kind === 'file') {
+            fileCount += 1;
+            try {
+              const f = await (entry as FileSystemFileHandle).getFile();
+              usedBytes += f.size;
+            } catch {
+              // Ignorar archivo ilegible puntual
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignorar si la enumeración falla
+    }
+  }
+
+  return {
+    folderName: handle.name || 'Almacenamiento interno',
+    fileCount,
+    usedBytes,
+    permissionState,
+  };
+}
+
 export async function clearDeviceDirectorySelection(): Promise<void> {
   cachedDeviceDir = null;
   await del(DEVICE_FS_KEY, deviceFsStore).catch(() => {});

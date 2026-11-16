@@ -37,13 +37,16 @@
     clearAllAudioFiles,
     deleteAudioFile,
     getDeviceDirectoryHandle,
+    getDeviceStorageInfo,
     getStorageUsage,
+    isDeviceAudioKey,
     isDeviceDirectoryPickerSupported,
     pickDeviceStorageDirectory,
     readAudioArrayBuffer,
     readAudioBlob,
     requestPersistentStorage,
     saveAudioFile,
+    type DeviceStorageInfo,
     type StorageUsageInfo,
   } from './lib/storage/opfsStorage';
   import type {
@@ -96,6 +99,7 @@
     quotaBytes: 0,
     persisted: false,
   });
+  let deviceStorageInfo = $state<DeviceStorageInfo | null>(null);
 
   let importing = $state(false);
   let importProgress = $state<{ done: number; total: number } | null>(null);
@@ -454,6 +458,7 @@
         guestAudioEl.onloadedmetadata = () => seekAndPlay();
       }
     } else {
+      guestAudioEl.onloadedmetadata = null;
       guestAudioEl.pause();
     }
   }
@@ -574,7 +579,12 @@
   });
 
   async function refreshStorageInfo() {
-    storageInfo = await getStorageUsage();
+    const [usage, devInfo] = await Promise.all([
+      getStorageUsage(),
+      getDeviceStorageInfo().catch(() => null),
+    ]);
+    storageInfo = usage;
+    deviceStorageInfo = devInfo;
     const pct =
       storageInfo.quotaBytes > 0 ? (storageInfo.usageBytes / storageInfo.quotaBytes) * 100 : 0;
 
@@ -614,11 +624,17 @@
         storage90Declined: false,
       });
       storagePromptMode = null;
+      await refreshStorageInfo();
       showToast(`Almacenamiento interno activo (${name}). Las nuevas canciones irán allí.`);
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       showToast(err instanceof Error ? err.message : 'No se pudo cambiar de almacenamiento.');
     }
+  }
+
+  function handleUseBrowserStorage() {
+    persistSettings({ storageMode: 'browser' });
+    showToast('Las nuevas descargas volverán al almacenamiento del navegador (OPFS).');
   }
 
   function handleDecline90StorageSwitch() {
@@ -1972,10 +1988,17 @@
           | 'move-queue-track';
         trackId?: string;
         direction?: 'up' | 'down';
+        targetPlaying?: boolean;
         byName?: string;
       };
       if (cmd.action === 'toggle-play') {
-        void engine.togglePlayPause();
+        if (cmd.targetPlaying === false) {
+          engine.pause();
+        } else if (cmd.targetPlaying === true) {
+          void engine.play();
+        } else {
+          void engine.togglePlayPause();
+        }
       } else if (cmd.action === 'skip-next') {
         void engine.skipNext();
       } else if (cmd.action === 'previous') {
@@ -2172,7 +2195,7 @@
       });
 
       const localId = generateTrackId();
-      const opfsKey = buildSafeOpfsKey(localId, file.name);
+      const opfsKey = buildSafeOpfsKey(localId, file.name, settings.storageMode ?? 'browser');
       await saveAudioFile(opfsKey, file);
 
       const newTrack: Track = {
@@ -2990,12 +3013,15 @@
         <MonitoringView
           snapshot={engineSnapshot}
           {storageInfo}
+          {deviceStorageInfo}
           storageMode={settings.storageMode ?? 'browser'}
           deviceStorageName={settings.deviceStorageName ?? ''}
           tracksCount={tracks.length}
+          deviceTracksCount={tracks.filter((t) => isDeviceAudioKey(t.opfsKey)).length}
           playlistsCount={playlists.length}
           onRefresh={refreshStorageInfo}
           onSwitchStorage={handleSwitchToDeviceStorage}
+          onUseBrowserStorage={handleUseBrowserStorage}
           onClearDatabase={handleClearLocalDatabase}
         />
       {:else if activeModule === 'room'}

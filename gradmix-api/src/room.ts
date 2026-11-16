@@ -555,11 +555,11 @@ export class RoomDurableObject implements DurableObject {
     const body = await readJson<{
       participantId?: string;
       action?:
-        | 'toggle-play'
-        | 'skip-next'
-        | 'previous'
-        | 'remove-queue-track'
-        | 'move-queue-track';
+      | 'toggle-play'
+      | 'skip-next'
+      | 'previous'
+      | 'remove-queue-track'
+      | 'move-queue-track';
       trackId?: string;
       direction?: 'up' | 'down';
     }>(request);
@@ -605,6 +605,23 @@ export class RoomDurableObject implements DurableObject {
 
     if (!allowed || !participant) {
       return json({ error: 'Sin permiso para esta acción en la sala.' }, 403);
+    }
+
+    if (body.action === 'toggle-play') {
+      room.isPlaying = !room.isPlaying;
+      room.playbackSyncedAtMs = Date.now();
+      await this.persist(room);
+      this.broadcast('room-state', this.publicRoom(room));
+      this.broadcast(
+        'room-command',
+        {
+          action: 'toggle-play',
+          targetPlaying: room.isPlaying,
+          byName: participant.name,
+        },
+        room.hostId
+      );
+      return json({ ok: true, isPlaying: room.isPlaying });
     }
 
     this.broadcast(
@@ -960,8 +977,8 @@ export class RoomDurableObject implements DurableObject {
       nowPlayingTrackKey: room.nowPlayingTrackKey ?? null,
       hasLiveAudio: Boolean(
         room.hasLiveAudio &&
-          room.nowPlayingTrackKey &&
-          room.nowAudioTrackKey === room.nowPlayingTrackKey
+        room.nowPlayingTrackKey &&
+        room.nowAudioTrackKey === room.nowPlayingTrackKey
       ),
       basePositionSec: room.basePositionSec ?? 0,
       playbackSyncedAtMs: room.playbackSyncedAtMs ?? Date.now(),

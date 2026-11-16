@@ -2,6 +2,7 @@
   import whatsappDark from '../assets/whatsapp-dark.png';
   import whatsappLight from '../assets/whatsapp-light.png';
   import ConfirmModal from './ConfirmModal.svelte';
+  import { isDeviceAudioKey } from '../lib/storage/opfsStorage';
   import type { Playlist, SortOrder, ThemeMode, Track } from '../lib/types';
   import { extractBundleIdFromInput } from '../lib/utils/bundle';
   import {
@@ -785,8 +786,20 @@
                     </button>
 
                     <div class="flex shrink-0 items-center gap-1.5 tabular-nums text-[11px] text-zinc-400">
-                      {#if track.bpm}
-                        <span class="hidden sm:inline text-cyan-600 dark:text-cyan-400">{track.bpm}</span>
+                      {#if isDeviceAudioKey(track.opfsKey)}
+                        <span
+                          class="inline-flex items-center text-cyan-600 dark:text-cyan-400"
+                          title="Guardada en almacenamiento interno del dispositivo"
+                          aria-label="En almacenamiento interno"
+                        >
+                          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path
+                              d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            />
+                          </svg>
+                        </span>
                       {/if}
                       <span>{formatTime(track.duration)}</span>
                     </div>

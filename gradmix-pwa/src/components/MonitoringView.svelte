@@ -1,31 +1,37 @@
 <script lang="ts">
   import AccordionList from './AccordionList.svelte';
   import ConfirmModal from './ConfirmModal.svelte';
-  import type { StorageUsageInfo } from '../lib/storage/opfsStorage';
+  import type { DeviceStorageInfo, StorageUsageInfo } from '../lib/storage/opfsStorage';
   import type { AccordionItem, AudioEngineSnapshot } from '../lib/types';
   import { formatBytes } from '../lib/utils/format';
 
   interface Props {
     snapshot: AudioEngineSnapshot;
     storageInfo: StorageUsageInfo;
+    deviceStorageInfo?: DeviceStorageInfo | null;
     storageMode?: 'browser' | 'device';
     deviceStorageName?: string;
     tracksCount: number;
+    deviceTracksCount?: number;
     playlistsCount: number;
     onRefresh: () => void;
     onSwitchStorage?: () => Promise<void> | void;
+    onUseBrowserStorage?: () => void;
     onClearDatabase: () => Promise<void> | void;
   }
 
   let {
     snapshot,
     storageInfo,
+    deviceStorageInfo = null,
     storageMode = 'browser',
     deviceStorageName = '',
     tracksCount,
+    deviceTracksCount = 0,
     playlistsCount,
     onRefresh,
     onSwitchStorage,
+    onUseBrowserStorage,
     onClearDatabase,
   }: Props = $props();
 
@@ -36,23 +42,23 @@
     {
       id: 'pc',
       category: 'ALMACENAMIENTO INTERNO · PC (WINDOWS / MAC / LINUX)',
-      question: '¿Cómo selecciono una carpeta en mi computador?',
+      question: '¿Cómo selecciono una carpeta de mi disco local y cómo se reproduce?',
       answer:
-        'En Chrome o Edge, pulsa "Usar almacenamiento interno", crea o selecciona una carpeta dedicada (por ejemplo Música/GradMix) y acepta "Permitir editar archivos". Las canciones nuevas se guardarán ahí sin mover ni borrar lo que ya descargaste.',
+        'En Chrome o Edge, pulsa "Usar almacenamiento interno", entra a tu disco (por ejemplo C:\\Música) y crea o elige una carpeta dedicada (ej. GradMix) aceptando "Permitir editar archivos". Por seguridad web el navegador muestra el nombre de la carpeta en lugar de la letra de unidad, pero aparecerá arriba su propio apartado con el espacio usado y disponible. Las canciones descargadas allí muestran un ícono de carpeta y se reproducen directamente dentro de GradMix sin usar otro reproductor.',
     },
     {
       id: 'android',
       category: 'ALMACENAMIENTO INTERNO · ANDROID (CHROME / PWA)',
       question: '¿Qué carpeta debo elegir en Android y qué hacer si la bloquea?',
       answer:
-        'Si se abre el selector de archivos, entra a Música o Documentos y crea una subcarpeta nueva (ej. GradMix); Android bloquea la raíz y la carpeta Descargas por seguridad. Si tu navegador móvil no soporta el selector, libera canciones antiguas o usa la app instalada.',
+        'Si se abre el selector de archivos, entra a Música o Documentos y crea una subcarpeta nueva (ej. GradMix); Android bloquea la raíz del dispositivo y Descargas por seguridad. Una vez autorizada, verás el apartado dedicado arriba y tus canciones llevarán el ícono de carpeta para reproducirse directo en la app. Si tu navegador móvil no soporta el selector, libera pistas antiguas o usa la PWA instalada.',
     },
     {
       id: 'ios',
       category: 'ALMACENAMIENTO INTERNO · IPHONE / IPAD (IOS)',
       question: '¿Cómo funciona el almacenamiento interno en iPhone o iPad?',
       answer:
-        'Safari e iOS no permiten acceso directo a carpetas del sistema desde la web. Para conservar tu biblioteca sin pérdidas, instala GradMix en tu Pantalla de inicio (Compartir → Añadir a inicio) y mantén tus descargas dentro de la cuota persistente del navegador.',
+        'Safari e iOS no permiten acceso directo a carpetas del sistema desde la web. Para conservar tu biblioteca sin pérdidas, instala GradMix en tu Pantalla de inicio (Compartir → Añadir a inicio) y mantén tus descargas dentro de la cuota persistente del navegador (10 GB).',
     },
   ];
 
@@ -238,13 +244,95 @@
             class="inline-flex items-center gap-1.5 border border-red-800 bg-red-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-800 disabled:opacity-40"
           >
             <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 6h18M8 6V4h8v2m-1 0v14H9V6h6z" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M3 6h18M9 6V4h6v2" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
-            <span>{clearing ? 'Vaciando...' : 'Vaciar base de datos local'}</span>
+            <span>{clearing ? 'Borrando...' : 'Borrar datos'}</span>
           </button>
         </div>
       </div>
     </div>
+
+    {#if storageMode === 'device' || deviceStorageInfo || deviceTracksCount > 0}
+      {@const folderTitle = deviceStorageInfo?.folderName || deviceStorageName || 'Carpeta local'}
+      {@const deviceActive = storageMode === 'device'}
+      {@const permGranted = deviceStorageInfo?.permissionState === 'granted'}
+      <div class="mt-3 border border-cyan-500/40 bg-cyan-50/30 p-3.5 dark:border-cyan-900/60 dark:bg-zinc-950">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <svg class="h-4 w-4 text-cyan-600 dark:text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path
+                d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <div>
+              <p class="text-[11px] font-semibold uppercase tracking-wider text-cyan-700 dark:text-cyan-400">
+                Almacenamiento Interno del Dispositivo · {folderTitle}
+              </p>
+              <p class="mt-0.5 tabular-nums text-sm font-semibold text-zinc-900 dark:text-white">
+                {permGranted && deviceStorageInfo
+                  ? `${formatBytes(deviceStorageInfo.usedBytes)} usados en la carpeta`
+                  : 'Carpeta autorizada (toca para verificar permiso)'}
+              </p>
+            </div>
+          </div>
+
+          <span
+            class="border px-2 py-1 text-[11px] font-medium {deviceActive
+              ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-800 dark:text-cyan-300'
+              : 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-black dark:text-zinc-400'}"
+          >
+            {deviceActive ? 'Activo · Aparte de los 10 GB OPFS' : 'En espera (OPFS activo)'}
+          </span>
+        </div>
+
+        <p class="mt-2 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+          Las pistas descargadas en esta carpeta quedan en tu disco fuera de los 10 GB del navegador, se identifican con el
+          <strong class="text-cyan-700 dark:text-cyan-400">ícono de carpeta</strong> en tus playlists y se reproducen directamente dentro de GradMix.
+          {#if storageInfo.quotaBytes > storageInfo.usageBytes}
+            Espacio libre estimado en cuota del navegador: <strong>{formatBytes(storageInfo.quotaBytes - storageInfo.usageBytes)}</strong> (la carpeta local usa el almacenamiento libre de tu dispositivo).
+          {/if}
+        </p>
+
+        <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex gap-4 tabular-nums text-xs text-zinc-500 dark:text-zinc-400">
+            <span>
+              Pistas en almacenamiento interno:
+              <strong class="text-zinc-800 dark:text-zinc-200">{deviceTracksCount}</strong>
+            </span>
+            {#if permGranted && deviceStorageInfo}
+              <span>
+                Archivos en carpeta:
+                <strong class="text-zinc-800 dark:text-zinc-200">{deviceStorageInfo.fileCount}</strong>
+              </span>
+            {/if}
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            {#if onSwitchStorage}
+              <button
+                type="button"
+                onclick={() => onSwitchStorage()}
+                class="border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-900 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white dark:hover:bg-zinc-800"
+              >
+                {permGranted ? 'Cambiar carpeta' : 'Autorizar / Reabrir carpeta'}
+              </button>
+            {/if}
+            {#if deviceActive && onUseBrowserStorage}
+              <button
+                type="button"
+                onclick={onUseBrowserStorage}
+                class="border border-zinc-300 bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-200 dark:border-zinc-800 dark:bg-black dark:text-zinc-300 dark:hover:bg-zinc-900"
+              >
+                Usar navegador (OPFS)
+              </button>
+            {/if}
+          </div>
+        </div>
+      </div>
+    {/if}
 
     <!-- Guía desplegable de Almacenamiento Interno por dispositivo (PC / Android / iOS) -->
     <div class="mt-4 border border-zinc-200 bg-white dark:border-zinc-900 dark:bg-black">
@@ -264,9 +352,9 @@
 
 <ConfirmModal
   open={confirmClearOpen}
-  title="Vaciar base de datos local"
+  title="Borrar datos"
   message="¿Seguro que deseas borrar todas las canciones de OPFS y reiniciar tus playlists locales? Esta acción liberará el espacio del navegador y no se puede deshacer."
-  confirmLabel="Sí, vaciar todo"
+  confirmLabel="Sí, borrar datos"
   danger={true}
   onConfirm={confirmWipe}
   onCancel={() => (confirmClearOpen = false)}

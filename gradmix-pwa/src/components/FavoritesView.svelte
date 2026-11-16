@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isDeviceAudioKey } from '../lib/storage/opfsStorage';
   import type { Track } from '../lib/types';
   import { formatTime } from '../lib/utils/format';
 
@@ -90,9 +91,24 @@
             </p>
           </button>
 
-          <span class="tabular-nums text-[11px] text-zinc-400">
-            {formatTime(track.duration)}
-          </span>
+          <div class="flex shrink-0 items-center gap-1.5 tabular-nums text-[11px] text-zinc-400">
+            {#if isDeviceAudioKey(track.opfsKey)}
+              <span
+                class="inline-flex items-center text-cyan-600 dark:text-cyan-400"
+                title="Guardada en almacenamiento interno del dispositivo"
+                aria-label="En almacenamiento interno"
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path
+                    d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+            {/if}
+            <span>{formatTime(track.duration)}</span>
+          </div>
 
           <button
             type="button"

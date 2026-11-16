@@ -1,12 +1,10 @@
 # Despliegue de GradMix (Vercel + Cloudflare)
 
-Estado al **15 de noviembre de 2026**. Todo el código está construido y probado en
-local; solo falta ejecutar los despliegues que requieren las credenciales de
-Cloudflare.
+Estado: **desplegado y verificado el 16 de noviembre de 2026**.
 
-- Sitio: `https://gradmix.arc03.online` (Vercel, proyecto `gradmix`).
-- API de salas y links de playlist: `https://api.gradmix.arc03.online` (Worker
-  `gradmix-api` + Durable Objects + R2).
+- Sitio: <https://gradmix.arc03.online> (Vercel, proyecto `gradmix`).
+- API de salas y links de playlist: <https://api.gradmix.arc03.online>
+  (Worker `gradmix-api` + Durable Objects + R2 `gradmix-audio`).
 
 ---
 
@@ -25,6 +23,8 @@ Navegador (PWA Svelte 5)
   necesita hasta 60 s por petición (`maxDuration`).
 - Salas y paquetes van al Worker porque necesitan WebSocket, SSE y estado
   compartido: Durable Objects con almacenamiento SQLite y R2 para el audio.
+- Sitio y API son orígenes distintos. El Worker solo acepta los orígenes listados
+  en `ALLOWED_ORIGINS` (`wrangler.jsonc`) y los previews de Vercel del proyecto.
 
 ### Código
 
@@ -39,6 +39,7 @@ Navegador (PWA Svelte 5)
 | `gradmix-api/src/room.ts` | `RoomDurableObject`: estado, join, SSE, WS, audio, permisos, comandos, alarma. |
 | `gradmix-api/src/bundle.ts` | `BundleDurableObject`: manifiesto + audio, TTL 24 h. |
 | `gradmix-api/src/shared.ts` | Tipos, JSON, códigos, PBKDF2, CORS. |
+| `gradmix-api/scripts/smoke.mjs` | 36 comprobaciones end-to-end del API. |
 | `gradmix-api/wrangler.jsonc` | Bindings, migración `v1` y ruta `api.gradmix.arc03.online`. |
 
 ### Reglas de negocio implementadas
@@ -54,120 +55,65 @@ Navegador (PWA Svelte 5)
 
 ---
 
-## 2. Lo que ya está hecho
+## 2. Infraestructura creada
 
-- [x] Proyecto Vercel `gradmix` creado y desplegado en `https://gradmix.vercel.app`.
-- [x] `gradmix.arc03.online` agregado al proyecto (queda `misconfigured` hasta crear el CNAME).
-- [x] Catálogo serverless funcionando en producción (`/api/catalog/trending`,
-      `/api/catalog/search`, `/api/catalog/stream`), con `policy` de SoundCloud
-      aceptando `ALLOW` y `MONETIZE`.
-- [x] Node del proyecto fijado en `24.x`.
-- [x] Worker completo en `gradmix-api/` con `npx tsc --noEmit` limpio.
-- [x] Suite de pruebas del Worker aprobada (36 comprobaciones, ver
-      `gradmix-api/scripts/smoke.mjs`): creación de sala, códigos ocupados, claves,
-      inviteToken, estado, CORS, WebSocket, SSE, subida y descarga única de audio,
-      permisos, comandos, bundles y cierre.
-- [x] Frontend desacoplado del origen: `apiUrl()` / `apiWsUrl()` en
-      `src/lib/api/base.ts`; `npm run check` y `npm run build` limpios.
-- [x] CORS del Worker verificado: preflight 204 para orígenes permitidos y 403
-      para orígenes desconocidos.
+| Recurso | Valor |
+| --- | --- |
+| Cuenta Cloudflare | `103e5976599c90859dca585c08ee33a9` (rcollante03122004@gmail.com) |
+| Zona | `arc03.online` (`eccf789512d130324ac174938e803525`) |
+| Worker | `gradmix-api` |
+| Bucket R2 | `gradmix-audio` |
+| Durable Objects | `RoomDurableObject` (ROOMS), `BundleDurableObject` (BUNDLES) |
+| DNS del sitio | `A gradmix` → `76.76.21.21`, proxy **DNS only** |
+| DNS del API | `api.gradmix` → lo crea el custom domain del Worker |
+| Vercel env | `VITE_API_BASE=https://api.gradmix.arc03.online` (Production) |
 
----
+Vercel: proyecto `gradmix` (team `aruiz3122004s-projects`), dominio
+`gradmix.arc03.online` verificado.
 
-## 3. Pendientes para mañana (en orden)
-
-### Paso 1 — API Token de Cloudflare
-
-Crear en <https://dash.cloudflare.com/profile/api-tokens> un token con:
-
-- `Zone → DNS → Edit` sobre `arc03.online`.
-- `Account → Workers Scripts → Edit`.
-- `Account → Workers R2 Storage → Edit`.
-- `Account → Durable Objects → Edit`.
-- `Account → Account Settings → Read`.
-
-Luego, en PowerShell:
+### Verificación
 
 ```powershell
-$env:CLOUDFLARE_API_TOKEN = "<token>"
-cd C:\Users\caric\Downloads\proyectos_andres\DjARC\gradmix-api
-npx wrangler whoami
-```
-
-### Paso 2 — Bucket R2
-
-```powershell
-npx wrangler r2 bucket create gradmix-audio
-```
-
-Sin este bucket `wrangler deploy` falla.
-
-### Paso 3 — Desplegar el Worker
-
-```powershell
-cd C:\Users\caric\Downloads\proyectos_andres\DjARC\gradmix-api
-npx wrangler deploy
-```
-
-`wrangler.jsonc` ya declara `routes: [{ pattern: "api.gradmix.arc03.online",
-custom_domain: true }]`, así que el despliegue crea el DNS y el certificado del
-subdominio automáticamente sobre la zona `arc03.online`.
-
-Verificar:
-
-```powershell
-curl.exe https://api.gradmix.arc03.online/api/health
-# {"ok":true,"service":"gradmix-api"}
-
-cd C:\Users\caric\Downloads\proyectos_andres\DjARC\gradmix-api
+cd gradmix-api
 node scripts/smoke.mjs https://api.gradmix.arc03.online
 # 36 comprobaciones OK. Todo correcto.
 ```
 
-### Paso 4 — CNAME del sitio
+---
 
-En el panel de Cloudflare (zona `arc03.online`) crear:
+## 3. Cómo desplegar cambios
 
-| Tipo | Nombre | Contenido | Proxy |
-| --- | --- | --- | --- |
-| CNAME | `gradmix` | `cname.vercel-dns.com` | **DNS only** (gris) |
-
-Si el dominio sigue `misconfigured`, ejecutar `vercel domains inspect
-gradmix.arc03.online` en `gradmix-pwa` y confirmar que el proyecto es `gradmix`.
-
-### Paso 5 — Conectar el frontend con el Worker
+### API (salas y bundles)
 
 ```powershell
-cd C:\Users\caric\Downloads\proyectos_andres\DjARC\gradmix-pwa
-"https://api.gradmix.arc03.online" | vercel env add VITE_API_BASE production
-```
-
-Y volver a desplegar (no hay auto-deploy por Git: el proyecto está vinculado en
-`gradmix-pwa`, no en la raíz del repo):
-
-```powershell
-npm run build
-vercel deploy --prod --yes
-```
-
-### Paso 6 — Verificación end-to-end
-
-Prueba técnica del Worker (no requiere navegador):
-
-```powershell
+cd gradmix-api
+npm run deploy
 node scripts/smoke.mjs https://api.gradmix.arc03.online
 ```
 
-Y desde `https://gradmix.arc03.online`:
+> `npm run deploy` invoca `wrangler@3.114.15` a propósito. La 4.162 (la que usa
+> `npm run dev`) falla en este proyecto: sube el script pero aborta al leer metadata
+> de la API beta (`/workers/workers/...` → 404 "This Worker does not exist on your
+> account"), así que el despliegue no se activa. No cambiar el script sin probarlo
+> antes en un preview.
 
-1. Crear sala con clave y compartirla por WhatsApp.
-2. Unirse desde otro dispositivo con la clave y con el link de invitación.
-3. Subir una canción como invitado y comprobar que el host la recibe y suena.
-4. Cambiar permisos y enviar `pause`/`skip` desde el invitado.
-5. Generar un link de playlist, abrirlo en una ventana privada e importar.
-6. Reproducir una pista del catálogo (SoundCloud/Audius) para confirmar que
-   `/api/catalog/*` sigue sirviendo desde Vercel.
-7. Cerrar la sala como host y confirmar que el invitado ve "sala cerrada".
+### Sitio (Vercel)
+
+No hay auto-deploy por Git (el proyecto está vinculado en `gradmix-pwa`, no en la
+raíz del repo). Desplegar manualmente:
+
+```powershell
+cd gradmix-pwa
+npm run build
+npx vercel deploy --prod --yes
+```
+
+Cambiar `VITE_API_BASE` exige rebuild (se incrusta en el bundle). Para definirla
+sin saltos de línea:
+
+```powershell
+npx vercel env add VITE_API_BASE production --value "https://api.gradmix.arc03.online" --yes
+```
 
 ---
 
@@ -183,6 +129,7 @@ El Worker también se puede correr aparte:
 ```powershell
 cd gradmix-api
 npx wrangler dev --port 8787
+node scripts/smoke.mjs
 ```
 
 Y apuntar el frontend con un `.env.local`:
@@ -195,11 +142,14 @@ VITE_API_BASE=http://127.0.0.1:8787
 
 ## 5. Notas y límites
 
-- `VITE_API_BASE` se incrusta en el bundle al compilar: cambiarla exige rebuild.
 - Límite por pista: 35 MB (`MAX_UPLOAD_BYTES`). El Worker exige `Content-Length`
   (411 si falta) porque R2 necesita streams de longitud conocida.
-- Sitio y Worker son orígenes distintos: si se agrega un dominio nuevo, sumarlo
-  a `ALLOWED_ORIGINS` en `gradmix-api/wrangler.jsonc` y volver a desplegar.
+- Si se agrega un dominio nuevo, sumarlo a `ALLOWED_ORIGINS` en
+  `gradmix-api/wrangler.jsonc` y volver a desplegar.
 - El audio de salas se borra al expirar; el de bundles a las 24 h.
-- Si hay que revertir el frontend: `vercel rollback` en `gradmix-pwa`. El Worker
-  se revierte con `npx wrangler rollback`.
+- Revertir el frontend: `npx vercel rollback`. Revertir el Worker:
+  `npx wrangler rollback`.
+- Las credenciales de Cloudflare del equipo son un OAuth token de `wrangler`
+  (guardado en `%APPDATA%\xdg.config\.wrangler\config\default.toml`) que **no**
+  incluye permisos de DNS: los registros DNS se gestionan en el panel o con un
+  token con `Zone → DNS → Edit`.

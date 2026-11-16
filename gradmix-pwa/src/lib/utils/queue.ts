@@ -114,6 +114,25 @@ export class PlaybackQueue {
     this.upNextQueue.push(trackId);
   }
 
+  /**
+   * Inserta una pista en la posición #1 de la cola (por encima de lo que seguía originalmente).
+   */
+  enqueueFirst(trackId: string): void {
+    if (this.upNextQueue[0] === trackId) return;
+    this.upNextQueue = [trackId, ...this.upNextQueue.filter((id) => id !== trackId)];
+  }
+
+  removeFromUpNext(trackId: string): boolean {
+    const next = this.upNextQueue.filter((id) => id !== trackId);
+    if (next.length === this.upNextQueue.length) return false;
+    this.upNextQueue = next;
+    return true;
+  }
+
+  setUpNextOrder(trackIds: string[]): void {
+    this.upNextQueue = [...trackIds];
+  }
+
   getUpNextIds(): string[] {
     return [...this.upNextQueue];
   }

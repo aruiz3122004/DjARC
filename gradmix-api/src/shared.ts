@@ -52,6 +52,7 @@ export interface RoomDoc {
   nowPlayingTitle: string | null;
   nowPlayingArtist?: string | null;
   nowPlayingTrackKey?: string | null;
+  nowAudioTrackKey?: string | null;
   nowPlayingAudioMime?: string | null;
   hasLiveAudio?: boolean;
   basePositionSec?: number;

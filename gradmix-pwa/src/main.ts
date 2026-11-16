@@ -4,6 +4,13 @@ import './app.css';
 import App from './App.svelte';
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+
   registerSW({
     immediate: true,
     onOfflineReady() {

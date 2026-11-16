@@ -40,7 +40,15 @@
     onToggleGuestMute?: () => void;
     onUploadRoomFiles: (files: FileList | File[]) => void;
     onDeleteRoomTrack: (trackId: string) => void;
-    onRemoteCommand: (action: 'toggle-play' | 'skip-next' | 'previous') => void;
+    onRemoteCommand: (
+      action:
+        | 'toggle-play'
+        | 'skip-next'
+        | 'previous'
+        | 'remove-queue-track'
+        | 'move-queue-track',
+      payload?: { trackId?: string; direction?: 'up' | 'down' }
+    ) => void;
   }
 
   let {
@@ -106,6 +114,7 @@
   let canPause = $derived(Boolean(isHost || me?.permissions.canPause));
   let canAdd = $derived(Boolean(isHost || me?.permissions.canAdd));
   let canRemove = $derived(Boolean(isHost || me?.permissions.canRemove));
+  let pendingRoomTracks = $derived((room?.tracks ?? []).filter((t) => t.hasAudioRelay));
   let hostQueue = $derived((room?.playbackQueue ?? []).slice(0, 5));
 
   let remainingSeconds = $derived(
@@ -539,10 +548,10 @@
         </div>
       </div>
 
-      <!-- Cola de la sala (pistas subidas + cola real en reproducción del Host) -->
+      <!-- Cola de la sala (pistas por descargar + cola real en reproducción del Host) -->
       <div class="mt-4 flex items-center justify-between gap-2">
         <h3 class="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-          Cola de la Sala ({room.tracks.length + hostQueue.length})
+          Cola de la Sala ({pendingRoomTracks.length + hostQueue.length})
         </h3>
 
         {#if canAdd}
@@ -572,20 +581,20 @@
         {/if}
       </div>
 
-      <div class="mt-2.5 max-h-56 space-y-1.5 overflow-y-auto">
-        {#if room.tracks.length === 0 && hostQueue.length === 0}
+      <div class="mt-2.5 max-h-64 space-y-1.5 overflow-y-auto">
+        {#if pendingRoomTracks.length === 0 && hostQueue.length === 0}
           <p class="py-5 text-center text-xs text-zinc-400">
             Aún no hay canciones en la sala.
           </p>
         {:else}
-          {#each room.tracks as trk (trk.id)}
+          {#each pendingRoomTracks as trk (trk.id)}
             <div class="flex items-center justify-between gap-2 border border-zinc-200 bg-zinc-50/50 px-3 py-2 dark:border-zinc-900 dark:bg-black">
               <div class="min-w-0 flex-1">
                 <p class="truncate text-xs font-medium text-zinc-900 dark:text-zinc-100">
                   {trk.title}
                 </p>
                 <p class="truncate text-[11px] text-zinc-500">
-                  {trk.artist} · {trk.addedByName}
+                  {trk.artist} · {trk.addedByName} (recibiendo...)
                 </p>
               </div>
               {#if canRemove}
@@ -593,11 +602,11 @@
                   type="button"
                   disabled={roomActionBusy}
                   onclick={() => onDeleteRoomTrack(trk.id)}
-                  title="Eliminar"
-                  aria-label="Eliminar"
-                  class="p-1 text-zinc-400 hover:text-red-500 disabled:opacity-30"
+                  title="Eliminar canción"
+                  aria-label="Eliminar canción"
+                  class="p-1 text-zinc-400 transition hover:text-red-500 disabled:opacity-30"
                 >
-                  <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                     <path d="M18 6L6 18M6 6l12 12" stroke-linecap="round" />
                   </svg>
                 </button>
@@ -625,6 +634,55 @@
               >
                 {qIdx === 0 ? 'Siguiente' : 'En cola'}
               </span>
+
+              {#if canAdd || canRemove}
+                <div class="flex shrink-0 items-center gap-0.5 pl-1">
+                  {#if canAdd}
+                    <button
+                      type="button"
+                      disabled={qIdx === 0 || roomActionBusy}
+                      onclick={() =>
+                        onRemoteCommand('move-queue-track', { trackId: qTrk.id, direction: 'up' })}
+                      title="Subir en la cola"
+                      aria-label="Subir en la cola"
+                      class="p-1 text-zinc-500 transition hover:text-zinc-900 disabled:opacity-25 dark:text-zinc-400 dark:hover:text-white"
+                    >
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <path d="M12 19V5M5 12l7-7 7 7" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={qIdx === hostQueue.length - 1 || roomActionBusy}
+                      onclick={() =>
+                        onRemoteCommand('move-queue-track', { trackId: qTrk.id, direction: 'down' })}
+                      title="Bajar en la cola"
+                      aria-label="Bajar en la cola"
+                      class="p-1 text-zinc-500 transition hover:text-zinc-900 disabled:opacity-25 dark:text-zinc-400 dark:hover:text-white"
+                    >
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <path d="M12 5v14M5 12l7 7 7-7" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                  {/if}
+
+                  {#if canRemove}
+                    <button
+                      type="button"
+                      disabled={roomActionBusy}
+                      onclick={() =>
+                        onRemoteCommand('remove-queue-track', { trackId: qTrk.id })}
+                      title="Eliminar de la cola"
+                      aria-label="Eliminar de la cola"
+                      class="p-1 text-zinc-400 transition hover:text-red-500 disabled:opacity-30"
+                    >
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                        <path d="M18 6L6 18M6 6l12 12" stroke-linecap="round" />
+                      </svg>
+                    </button>
+                  {/if}
+                </div>
+              {/if}
             </div>
           {/each}
         {/if}

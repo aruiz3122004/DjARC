@@ -731,20 +731,7 @@ export class GradMixAudioEngine {
     }
   }
 
-  /**
-   * Añade una canción a la cola para que se reproduzca inmediatamente después de la actual.
-   * Si no hay ninguna canción cargada, la reproduce al instante.
-   */
-  async enqueueNext(trackId: string): Promise<'played' | 'queued' | 'missing'> {
-    if (!this.tracksById.has(trackId)) return 'missing';
-
-    const active = this.decks[this.activeDeckId];
-    if (!active.trackId && !this.queue.getCurrentId()) {
-      await this.playTrack(trackId, { crossfade: false });
-      return 'played';
-    }
-
-    this.queue.enqueueNext(trackId);
+  private refreshStandbyAfterQueueChange(): void {
     const standby = this.decks[this.getStandbyDeckId()];
     const expectedNext = this.queue.peekNextTrackId(false);
     if (!this.crossfading && expectedNext && standby.trackId !== expectedNext) {
@@ -754,7 +741,55 @@ export class GradMixAudioEngine {
       }
     }
     this.emit();
+  }
+
+  private async enqueueWithPlacement(
+    trackId: string,
+    placement: 'first' | 'last'
+  ): Promise<'played' | 'queued' | 'missing'> {
+    if (!this.tracksById.has(trackId)) return 'missing';
+
+    const active = this.decks[this.activeDeckId];
+    if (!active.trackId && !this.queue.getCurrentId()) {
+      await this.playTrack(trackId, { crossfade: false });
+      return 'played';
+    }
+
+    if (placement === 'first') {
+      this.queue.enqueueFirst(trackId);
+    } else {
+      this.queue.enqueueNext(trackId);
+    }
+    this.refreshStandbyAfterQueueChange();
     return 'queued';
+  }
+
+  /**
+   * Añade una canción a la cola para que se reproduzca después de las ya encoladas.
+   * Si no hay ninguna canción cargada, la reproduce al instante.
+   */
+  async enqueueNext(trackId: string): Promise<'played' | 'queued' | 'missing'> {
+    return this.enqueueWithPlacement(trackId, 'last');
+  }
+
+  /**
+   * Inserta una canción como primera siguiente en la cola (#1), encima de la siguiente original.
+   */
+  async enqueueFirst(trackId: string): Promise<'played' | 'queued' | 'missing'> {
+    return this.enqueueWithPlacement(trackId, 'first');
+  }
+
+  removeFromUpNext(trackId: string): boolean {
+    const changed = this.queue.removeFromUpNext(trackId);
+    if (changed) {
+      this.refreshStandbyAfterQueueChange();
+    }
+    return changed;
+  }
+
+  setUpNextOrder(trackIds: string[]): void {
+    this.queue.setUpNextOrder(trackIds);
+    this.refreshStandbyAfterQueueChange();
   }
 
   setCrossfadeSeconds(seconds: number): void {

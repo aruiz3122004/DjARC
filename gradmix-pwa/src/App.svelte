@@ -145,6 +145,7 @@
   const roomTrackToLocalId = new Map<string, string>();
   let lastRoomSyncKey = '';
   let lastUploadedNowAudioKey = '';
+  let uploadingNowAudioKey = '';
   let guestMuted = $state(false);
   let guestAudioBlocked = $state(false);
   let guestAudioEl: HTMLAudioElement | null = null;
@@ -347,7 +348,7 @@
     }
   });
 
-  async function publishHostNowAudio(code: string, hostId: string, trk: Track) {
+  async function publishHostNowAudio(code: string, hostId: string, trk: Track): Promise<boolean> {
     try {
       const mem = engine.getMemoryBlob(trk.id);
       const blob =
@@ -355,8 +356,12 @@
         (await readAudioBlob(trk.opfsKey, inferAudioMimeType(trk.fileName, trk.mimeType)).catch(
           () => null
         ));
-      if (!blob || blob.size === 0 || blob.size > 35 * 1024 * 1024) return;
-      await fetch(apiUrl(`/api/rooms/${encodeURIComponent(code)}/now-audio`), {
+      if (!blob || blob.size === 0) return false;
+      if (blob.size > 35 * 1024 * 1024) {
+        showToast('La pista supera 35 MB; los invitados no recibirán su audio en vivo.');
+        return true;
+      }
+      const resp = await fetch(apiUrl(`/api/rooms/${encodeURIComponent(code)}/now-audio`), {
         method: 'POST',
         headers: {
           'Content-Type': inferAudioMimeType(trk.fileName, blob.type || trk.mimeType),
@@ -365,8 +370,9 @@
         },
         body: blob,
       });
+      return resp.ok;
     } catch {
-      // Ignorar fallo puntual al subir pista activa a la sala
+      return false;
     }
   }
 
@@ -397,6 +403,10 @@
       guestAudioEl.setAttribute('playsinline', 'true');
       guestAudioEl.ontimeupdate = () => {
         sendGuestAudioHeartbeatNow();
+      };
+      guestAudioEl.onerror = () => {
+        // Permite reintento automático si el audio aún estaba subiéndose o falló temporalmente
+        guestAudioLoadedKey = '';
       };
     }
     guestAudioEl.muted = guestMuted;
@@ -514,9 +524,41 @@
       }).catch(() => {});
     }
 
-    if (currentTrack && curTrackKey && curTrackKey !== lastUploadedNowAudioKey) {
-      lastUploadedNowAudioKey = curTrackKey;
-      void publishHostNowAudio(room.code, roomParticipantId, currentTrack);
+    if (
+      currentTrack &&
+      curTrackKey &&
+      curTrackKey !== lastUploadedNowAudioKey &&
+      curTrackKey !== uploadingNowAudioKey
+    ) {
+      const uploadCode = room.code;
+      const uploadHostId = roomParticipantId;
+      const trackToUpload = currentTrack;
+      uploadingNowAudioKey = curTrackKey;
+      void publishHostNowAudio(uploadCode, uploadHostId, trackToUpload).then((ok) => {
+        if (uploadingNowAudioKey === curTrackKey) uploadingNowAudioKey = '';
+        if (ok) {
+          if (activeRoomSession?.code === uploadCode) {
+            lastUploadedNowAudioKey = curTrackKey;
+          }
+          return;
+        }
+        window.setTimeout(() => {
+          if (
+            activeRoomSession?.code === uploadCode &&
+            engineSnapshot.currentTrackId === curTrackKey &&
+            lastUploadedNowAudioKey !== curTrackKey &&
+            uploadingNowAudioKey !== curTrackKey
+          ) {
+            uploadingNowAudioKey = curTrackKey;
+            void publishHostNowAudio(uploadCode, uploadHostId, trackToUpload).then((retryOk) => {
+              if (uploadingNowAudioKey === curTrackKey) uploadingNowAudioKey = '';
+              if (retryOk && activeRoomSession?.code === uploadCode) {
+                lastUploadedNowAudioKey = curTrackKey;
+              }
+            });
+          }
+        }, 2000);
+      });
     }
   });
 
@@ -1858,6 +1900,7 @@
   function disconnectRoomRealtime() {
     activeRoomSession = null;
     lastUploadedNowAudioKey = '';
+    uploadingNowAudioKey = '';
     lastRoomSyncKey = '';
     roomBackGuardPushed = false;
     teardownGuestRoomAudio();
@@ -1920,8 +1963,15 @@
     }
     if (event === 'room-command') {
       const cmd = data as {
-        action: 'toggle-play' | 'skip-next' | 'previous' | 'remove-track';
+        action:
+          | 'toggle-play'
+          | 'skip-next'
+          | 'previous'
+          | 'remove-track'
+          | 'remove-queue-track'
+          | 'move-queue-track';
         trackId?: string;
+        direction?: 'up' | 'down';
         byName?: string;
       };
       if (cmd.action === 'toggle-play') {
@@ -1933,9 +1983,15 @@
       } else if (cmd.action === 'remove-track' && cmd.trackId) {
         const localId = roomTrackToLocalId.get(cmd.trackId);
         if (localId) {
+          removeRoomQueueTrackLocal(localId);
           void handleDeleteTrackCompletely(localId);
           roomTrackToLocalId.delete(cmd.trackId);
         }
+      } else if (cmd.action === 'remove-queue-track' && cmd.trackId) {
+        removeRoomQueueTrackLocal(cmd.trackId);
+        if (cmd.byName) showToast(`"${cmd.byName}" quitó una canción de la cola.`);
+      } else if (cmd.action === 'move-queue-track' && cmd.trackId && cmd.direction) {
+        moveRoomQueueTrackLocal(cmd.trackId, cmd.direction);
       }
       return;
     }
@@ -2138,20 +2194,39 @@
 
       roomTrackToLocalId.set(info.trackId, localId);
       const targetPlaylistId = activePlaylist?.id ?? DEFAULT_PLAYLIST_ID;
+      const curPlayingId = engineSnapshot.currentTrackId;
 
-      tracks = [...tracks, newTrack];
-      playlists = playlists.map((pl) =>
-        pl.id === targetPlaylistId
-          ? { ...pl, trackIds: [...pl.trackIds, localId], updatedAt: Date.now() }
-          : pl
-      );
+      const updatedTracks = [...tracks, newTrack];
+      let nextPlaylistOrder: string[] = [];
+      const updatedPlaylists = playlists.map((pl) => {
+        if (pl.id !== targetPlaylistId) return pl;
+        const curIdx = curPlayingId ? pl.trackIds.indexOf(curPlayingId) : -1;
+        const nextIds = [...pl.trackIds];
+        if (curIdx >= 0) {
+          nextIds.splice(curIdx + 1, 0, localId);
+        } else {
+          nextIds.unshift(localId);
+        }
+        nextPlaylistOrder = nextIds;
+        return { ...pl, trackIds: nextIds, updatedAt: Date.now() };
+      });
+
+      tracks = updatedTracks;
+      playlists = updatedPlaylists;
 
       await Promise.all([
-        saveTracks($state.snapshot(tracks)),
-        savePlaylists($state.snapshot(playlists)),
+        saveTracks($state.snapshot(updatedTracks)),
+        savePlaylists($state.snapshot(updatedPlaylists)),
       ]);
+
+      const combined =
+        ephemeralTracks.length > 0 ? [...updatedTracks, ...ephemeralTracks] : updatedTracks;
+      engine.syncLibrary(combined, nextPlaylistOrder);
+      // Colocar de primera en la cola (#1 Siguiente, encima de lo que venía después)
+      await engine.enqueueFirst(localId);
+
       bpmAnalyzer.enqueue(localId, opfsKey);
-      showToast(`"${info.title}" añadida por ${info.addedByName}.`);
+      showToast(`"${info.title}" colocada como siguiente por ${info.addedByName}.`);
     } catch {
       // Ignorar fallo puntual de red
     }
@@ -2460,21 +2535,124 @@
     });
   }
 
-  async function handleRemoteRoomCommand(action: 'toggle-play' | 'skip-next' | 'previous') {
+  function removeRoomQueueTrackLocal(trackId: string) {
+    engine.removeFromUpNext(trackId);
+    const pl = activePlaylist;
+    if (pl && pl.trackIds.includes(trackId)) {
+      const curId = engineSnapshot.currentTrackId;
+      const curFirstIdx = curId ? pl.trackIds.indexOf(curId) : -1;
+      const nextTrackIds = pl.trackIds.filter((id, idx) => {
+        if (id !== trackId) return true;
+        return id === curId && idx === curFirstIdx;
+      });
+      if (nextTrackIds.length !== pl.trackIds.length) {
+        playlists = playlists.map((p) =>
+          p.id === pl.id ? { ...p, trackIds: nextTrackIds, updatedAt: Date.now() } : p
+        );
+        void savePlaylists($state.snapshot(playlists));
+      }
+    }
+    for (const [remoteId, localId] of roomTrackToLocalId) {
+      if (localId === trackId) {
+        roomTrackToLocalId.delete(remoteId);
+      }
+    }
+  }
+
+  function moveRoomQueueTrackLocal(trackId: string, direction: 'up' | 'down') {
+    const upIds = [...engineSnapshot.upNextTrackIds];
+    const curId = engineSnapshot.currentTrackId;
+    const pl = activePlaylist;
+    const plIds = pl ? [...pl.trackIds] : [];
+    const plAfterIds: string[] = [];
+
+    if (hasPlaylistInPlayback && plIds.length > 0 && curId) {
+      const curIdx = plIds.indexOf(curId);
+      const after = curIdx >= 0 ? plIds.slice(curIdx + 1) : plIds;
+      for (const id of after) {
+        if (!upIds.includes(id)) plAfterIds.push(id);
+      }
+    }
+
+    const combined = [...upIds, ...plAfterIds];
+    const idx = combined.indexOf(trackId);
+    if (idx < 0) return;
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= combined.length) return;
+
+    if (idx < upIds.length && targetIdx < upIds.length) {
+      [upIds[idx], upIds[targetIdx]] = [upIds[targetIdx], upIds[idx]];
+      engine.setUpNextOrder(upIds);
+      return;
+    }
+
+    if (idx >= upIds.length && targetIdx >= upIds.length && pl) {
+      const idA = combined[idx];
+      const idB = combined[targetIdx];
+      const curIdx = curId ? plIds.indexOf(curId) : -1;
+      const startPos = curIdx >= 0 ? curIdx + 1 : 0;
+      const posA = plIds.indexOf(idA, startPos);
+      const posB = plIds.indexOf(idB, startPos);
+      if (posA >= 0 && posB >= 0) {
+        [plIds[posA], plIds[posB]] = [plIds[posB], plIds[posA]];
+        playlists = playlists.map((p) =>
+          p.id === pl.id ? { ...p, trackIds: plIds, updatedAt: Date.now() } : p
+        );
+        void savePlaylists($state.snapshot(playlists));
+      }
+      return;
+    }
+
+    if (plAfterIds.length > 0) {
+      const merged = [...upIds, plAfterIds[0]];
+      [merged[idx], merged[targetIdx]] = [merged[targetIdx], merged[idx]];
+      engine.setUpNextOrder(merged);
+    }
+  }
+
+  async function handleRemoteRoomCommand(
+    action: 'toggle-play' | 'skip-next' | 'previous' | 'remove-queue-track' | 'move-queue-track',
+    payload?: { trackId?: string; direction?: 'up' | 'down' }
+  ) {
     if (!room || !roomParticipantId) return;
-    await actionController.run(`room:cmd:${action}`, async () => {
+    const isHostUser = room.hostId === roomParticipantId;
+    if (isHostUser) {
+      if (action === 'toggle-play') {
+        await engine.togglePlayPause();
+      } else if (action === 'skip-next') {
+        await engine.skipNext();
+      } else if (action === 'previous') {
+        await engine.previous();
+      } else if (action === 'remove-queue-track' && payload?.trackId) {
+        removeRoomQueueTrackLocal(payload.trackId);
+      } else if (action === 'move-queue-track' && payload?.trackId && payload?.direction) {
+        moveRoomQueueTrackLocal(payload.trackId, payload.direction);
+      }
+      return;
+    }
+
+    const opKey = payload?.trackId
+      ? `room:cmd:${action}:${payload.trackId}`
+      : `room:cmd:${action}`;
+    await actionController.run(opKey, async () => {
       if (!room || !roomParticipantId) return;
       try {
         const resp = await fetch(
           apiUrl(`/api/rooms/${encodeURIComponent(room.code)}/command`),
           {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ participantId: roomParticipantId, action }),
-        });
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              participantId: roomParticipantId,
+              action,
+              trackId: payload?.trackId,
+              direction: payload?.direction,
+            }),
+          }
+        );
         if (!resp.ok) {
           const data = (await resp.json()) as { error?: string };
-          roomError = data.error || 'No tienes permiso para controlar la reproducción.';
+          roomError = data.error || 'No tienes permiso para controlar la sala.';
         }
       } catch {
         roomError = 'Error al enviar comando a la sala.';

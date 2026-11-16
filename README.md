@@ -17,8 +17,9 @@ Está pensada para **uso personal y grupos pequeños** — una fiesta, una reuni
 7. [Endpoints HTTP, SSE y WebSocket (`gradmix-api` y `/api/catalog`)](#endpoints-http-sse-y-websocket-gradmix-api-y-apicatalog)
 8. [Cómo Correr, Compilar y Probar la App](#cómo-correr-compilar-y-probar-la-app)
 9. [Decisiones Técnicas y su Porqué](#decisiones-técnicas-y-su-porqué)
-10. [Preguntas y Respuestas](#preguntas-y-respuestas)
-11. [Glosario Técnico](#glosario-técnico)
+10. [Seguridad y Privacidad](#seguridad-y-privacidad)
+11. [Preguntas y Respuestas](#preguntas-y-respuestas)
+12. [Glosario Técnico](#glosario-técnico)
 
 ---
 
@@ -419,6 +420,28 @@ Cada decisión incluye el motivo y, cuando aplica, el coste que aceptamos a camb
 - **Next.js**: GradMix es una SPA con dos funciones serverless; el framework añadiría servidor, routing y peso sin resolver nada del caso de uso.
 - **Un servidor Node propio** (el antiguo plugin de Vite): no escala a cero, exige mantener una máquina y duplicaba el backend real.
 - **App nativa con Capacitor**: la configuración existe, pero la PWA cubre el objetivo y evita publicar en tiendas. Es una vía abierta, no el camino principal.
+
+---
+
+## Seguridad y Privacidad
+
+GradMix adopta un modelo de defensa por capas adaptado a una PWA **local-first** sin cuentas de usuario ni base de datos centralizada de bibliotecas:
+
+### 1. Aislamiento en el cliente (Sandbox del navegador)
+- **Almacenamiento privado por origen (`OPFS` + `IndexedDB`):** las canciones descargadas y los metadatos viven dentro del espacio aislado del navegador para `gradmix.arc03.online`. La aplicación **no** puede leer ni recorrer el sistema de archivos del dispositivo por su cuenta.
+- **Acceso opcional a carpeta local (`File System Access API`):** cuando el usuario elige **Almacenamiento interno** desde *Monitoreo* (o al superar el 90%/99% de la cuota OPFS), el navegador exige selección manual de carpeta y confirmación explícita de permiso sobre ese directorio específico; las pistas previas no se migran ni se exponen.
+- **Superficie mínima de hardware y DOM:** no se solicita micrófono (`getUserMedia`), ubicación ni cámara. En `gradmix-pwa/src/` no existe `innerHTML`, `{@html}` ni `eval()`; Svelte escapa automáticamente títulos y metadatos provenientes de archivos MP3/M4A o del catálogo remoto para mitigar XSS.
+- **Inspección local de contenedores:** `inspectAudioContainer()` valida cabeceras binarias reales antes de decodificar o reproducir archivos importados/descargados.
+
+### 2. Seguridad del Backend de Salas y Bundles (`gradmix-api`)
+- **Hashing de claves efímeras (`PBKDF2-SHA256`):** las contraseñas de sala no se almacenan ni se comparan en texto plano; se derivan con **WebCrypto PBKDF2-SHA256** (`12 000` iteraciones, sal aleatoria de 12 bytes por sala en [shared.ts](gradmix-api/src/shared.ts)) y se validan en tiempo constante (`constantTimeEqual`).
+- **Tokens de invitación y autorización por rol:** cada sala genera un `inviteToken` aleatorio de 96 bits (`base64url`). Las acciones mutantes validan `hostId` o `participantId` + permisos granulares por usuario en el servidor (`canSkip`, `canPause`, `canAdd`, `canRemove`), incluyendo reordenamiento (`move-queue-track` dentro de `canAdd`) y borrado de cola (`remove-queue-track` dentro de `canRemove`). Nunca se confía en la validación del frontend.
+- **Control de presencia anti-duplicados y anti-hibernación:** los invitados se identifican por `deviceId` (reutilizando su slot si reconectan desde el mismo dispositivo) y envían latidos (`audio-heartbeat`) cada 3 s mientras permanecen activos. Los timestamps `seen:<participantId>` se persisten en `DurableObjectStorage` para sobrevivir a la hibernación de Cloudflare; si un invitado deja de reportar durante más de **10 s** (`GUEST_INACTIVITY_MS`), es expulsado automáticamente (`room-kicked`) y pierde acceso inmediato (`403`) a `/now-audio`, WebSocket y estado.
+- **CORS estricto por lista blanca (`ALLOWED_ORIGINS`):** el Worker en [index.ts](gradmix-api/src/index.ts) y [shared.ts](gradmix-api/src/shared.ts) responde con `Vary: Origin` y solo habilita los orígenes listados en [wrangler.jsonc](gradmix-api/wrangler.jsonc) (`https://gradmix.arc03.online`, `https://gradmix.vercel.app`, desarrollo local y previews verificados del proyecto en Vercel); orígenes desconocidos reciben `403` en preflight `OPTIONS`.
+- **Límites de carga y autodestrucción garantizada:** las subidas de pistas exigen `Content-Length` (`411` si falta) y se restringen a **35 MB** (`MAX_UPLOAD_BYTES`) tanto en salas como en bundles. Todo audio temporal en R2 (`now-audio` y relevos de sala) y estado en SQLite/DO se elimina automáticamente al cerrar la sala o al cumplirse la alarma de caducidad (`0,25 h` a `10 h` en salas, `24 h` en bundles).
+
+### 3. Protección de proxies en `/api/catalog/*` (Vercel)
+- El catálogo remoto consulta únicamente endpoints públicos desde funciones serverless del mismo origen (`https://gradmix.arc03.online/api/catalog/*`), evitando exponer cabeceras/consultas de origen cruzado desde el cliente y descartando streams con cifrado DRM.
 
 ---
 

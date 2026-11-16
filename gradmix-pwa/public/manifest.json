@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "GradMix Auto-DJ",
   "short_name": "GradMix",
   "description": "Auto-DJ offline ultra-ligero para fiestas de 10 horas con doble deck, crossfade equal-power, BPM y modo OLED Blackout.",
@@ -8,6 +9,7 @@
   "orientation": "portrait-primary",
   "background_color": "#000000",
   "theme_color": "#000000",
+  "prefer_related_applications": false,
   "categories": ["music", "entertainment", "utilities"],
   "icons": [
     {
@@ -27,12 +29,6 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
-    },
-    {
-      "src": "/favicon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
     }
   ]
 }

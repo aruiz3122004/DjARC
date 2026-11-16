@@ -46,18 +46,26 @@ export class RoomDurableObject implements DurableObject {
   constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
     this.env = env;
-    ctx.blockConcurrencyWhile(async () => {
-      this.doc = (await ctx.storage.get<RoomDoc>('room')) ?? null;
-      this.loaded = true;
-    });
+    ctx.blockConcurrencyWhile(() => this.hydrateFromStorage());
+  }
+
+  private async hydrateFromStorage(): Promise<void> {
+    this.doc = (await this.ctx.storage.get<RoomDoc>('room')) ?? null;
+    this.lastSeenMemory.clear();
+    const seenEntries = await this.ctx.storage.list<number>({ prefix: 'seen:' });
+    for (const [k, ts] of seenEntries) {
+      if (typeof ts === 'number') {
+        this.lastSeenMemory.set(k.slice(5), ts);
+      }
+    }
+    this.loaded = true;
   }
 
   async fetch(request: Request): Promise<Response> {
     if (!this.loaded) {
       await this.ctx.blockConcurrencyWhile(async () => {
         if (!this.loaded) {
-          this.doc = (await this.ctx.storage.get<RoomDoc>('room')) ?? null;
-          this.loaded = true;
+          await this.hydrateFromStorage();
         }
       });
     }
@@ -190,6 +198,7 @@ export class RoomDurableObject implements DurableObject {
       nowPlayingTitle: null,
       nowPlayingArtist: null,
       nowPlayingTrackKey: null,
+      nowAudioTrackKey: null,
       nowPlayingAudioMime: null,
       hasLiveAudio: false,
       basePositionSec: 0,
@@ -307,7 +316,7 @@ export class RoomDurableObject implements DurableObject {
     if (!client) return;
     clearInterval(client.timer);
     this.sseClients.delete(key);
-    client.writer.close().catch(() => {});
+    client.writer.close().catch(() => { });
   }
 
   private handleWebSocket(request: Request, url: URL, room: RoomDoc): Response {
@@ -439,12 +448,12 @@ export class RoomDurableObject implements DurableObject {
         httpMetadata: { contentType: headers.mimeType },
       });
       if (!stored || stored.size > MAX_UPLOAD_BYTES) {
-        await this.env.AUDIO.delete(key).catch(() => {});
+        await this.env.AUDIO.delete(key).catch(() => { });
         return json({ error: 'El archivo excede el límite de 35 MB por pista.' }, 413);
       }
     } catch (err) {
       console.error('room track upload failed', err);
-      await this.env.AUDIO.delete(key).catch(() => {});
+      await this.env.AUDIO.delete(key).catch(() => { });
       return json({ error: 'No se pudo guardar el audio de la pista.' }, 500);
     }
 
@@ -529,7 +538,7 @@ export class RoomDurableObject implements DurableObject {
 
     room.tracks = room.tracks.filter((t) => t.id !== trackId);
     await this.persist(room);
-    await this.env.AUDIO.delete(roomAudioKey(room.code, trackId)).catch(() => {});
+    await this.env.AUDIO.delete(roomAudioKey(room.code, trackId)).catch(() => { });
 
     const state = this.publicRoom(room);
     this.broadcast('room-state', state);
@@ -545,32 +554,69 @@ export class RoomDurableObject implements DurableObject {
   private async handleCommand(request: Request, room: RoomDoc): Promise<Response> {
     const body = await readJson<{
       participantId?: string;
-      action?: 'toggle-play' | 'skip-next' | 'previous';
+      action?:
+        | 'toggle-play'
+        | 'skip-next'
+        | 'previous'
+        | 'remove-queue-track'
+        | 'move-queue-track';
+      trackId?: string;
+      direction?: 'up' | 'down';
     }>(request);
 
-    if (
-      body.action !== 'toggle-play' &&
-      body.action !== 'skip-next' &&
-      body.action !== 'previous'
-    ) {
+    const validAction =
+      body.action === 'toggle-play' ||
+      body.action === 'skip-next' ||
+      body.action === 'previous' ||
+      body.action === 'remove-queue-track' ||
+      body.action === 'move-queue-track';
+    if (!validAction) {
       return json({ error: 'Acción inválida.' }, 400);
+    }
+
+    if (
+      (body.action === 'remove-queue-track' || body.action === 'move-queue-track') &&
+      !String(body.trackId ?? '').trim()
+    ) {
+      return json({ error: 'Falta trackId.' }, 400);
+    }
+    if (body.action === 'move-queue-track' && body.direction !== 'up' && body.direction !== 'down') {
+      return json({ error: 'Dirección inválida.' }, 400);
     }
 
     const participant = body.participantId
       ? this.findParticipant(room, body.participantId)
       : undefined;
-    const allowed =
-      Boolean(participant) &&
-      (participant!.isHost ||
-        (body.action === 'toggle-play'
-          ? participant!.permissions.canPause
-          : participant!.permissions.canSkip));
 
-    if (!allowed || !participant) {
-      return json({ error: 'Sin permiso para controlar reproducción.' }, 403);
+    let allowed = false;
+    if (participant) {
+      if (participant.isHost) {
+        allowed = true;
+      } else if (body.action === 'toggle-play') {
+        allowed = participant.permissions.canPause;
+      } else if (body.action === 'skip-next' || body.action === 'previous') {
+        allowed = participant.permissions.canSkip;
+      } else if (body.action === 'remove-queue-track') {
+        allowed = participant.permissions.canRemove;
+      } else if (body.action === 'move-queue-track') {
+        allowed = participant.permissions.canAdd;
+      }
     }
 
-    this.broadcast('room-command', { action: body.action, byName: participant.name }, room.hostId);
+    if (!allowed || !participant) {
+      return json({ error: 'Sin permiso para esta acción en la sala.' }, 403);
+    }
+
+    this.broadcast(
+      'room-command',
+      {
+        action: body.action,
+        trackId: body.trackId ? String(body.trackId).slice(0, 80) : undefined,
+        direction: body.direction,
+        byName: participant.name,
+      },
+      room.hostId
+    );
     return json({ ok: true });
   }
 
@@ -631,7 +677,7 @@ export class RoomDurableObject implements DurableObject {
         httpMetadata: { contentType: mimeType },
       });
       if (!stored || stored.size > MAX_UPLOAD_BYTES) {
-        await this.env.AUDIO.delete(r2Key).catch(() => {});
+        await this.env.AUDIO.delete(r2Key).catch(() => { });
         return json({ error: 'El archivo excede 35 MB.' }, 413);
       }
     } catch {
@@ -639,6 +685,7 @@ export class RoomDurableObject implements DurableObject {
     }
 
     room.nowPlayingTrackKey = trackKey;
+    room.nowAudioTrackKey = trackKey;
     room.nowPlayingAudioMime = mimeType;
     room.hasLiveAudio = true;
     await this.persist(room);
@@ -865,9 +912,9 @@ export class RoomDurableObject implements DurableObject {
     this.broadcast('room-closed', { reason });
     if (room) {
       for (const track of room.tracks) {
-        await this.env.AUDIO.delete(roomAudioKey(room.code, track.id)).catch(() => {});
+        await this.env.AUDIO.delete(roomAudioKey(room.code, track.id)).catch(() => { });
       }
-      await this.env.AUDIO.delete(roomNowAudioKey(room.code)).catch(() => {});
+      await this.env.AUDIO.delete(roomNowAudioKey(room.code)).catch(() => { });
     }
     for (const ws of this.ctx.getWebSockets()) {
       try {
@@ -911,7 +958,11 @@ export class RoomDurableObject implements DurableObject {
       nowPlayingTitle: room.nowPlayingTitle,
       nowPlayingArtist: room.nowPlayingArtist ?? null,
       nowPlayingTrackKey: room.nowPlayingTrackKey ?? null,
-      hasLiveAudio: Boolean(room.hasLiveAudio && room.nowPlayingTrackKey),
+      hasLiveAudio: Boolean(
+        room.hasLiveAudio &&
+          room.nowPlayingTrackKey &&
+          room.nowAudioTrackKey === room.nowPlayingTrackKey
+      ),
       basePositionSec: room.basePositionSec ?? 0,
       playbackSyncedAtMs: room.playbackSyncedAtMs ?? Date.now(),
       isPlaying: room.isPlaying,

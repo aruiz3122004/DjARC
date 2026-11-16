@@ -10,7 +10,7 @@
 2. [Mapa de Arquitectura](#mapa-de-arquitectura)
 3. [Estructura de Carpetas](#estructura-de-carpetas)
 4. [Dónde Tocar Cada Cosa (Guía de Mantenimiento)](#dónde-tocar-cada-cosa-guía-de-mantenimiento)
-5. [Endpoints HTTP, SSE y WebSocket (`vite-room-plugin.ts`)](#endpoints-http-sse-y-websocket-vite-room-plugints)
+5. [Endpoints HTTP, SSE y WebSocket (`gradmix-api` y `/api/catalog`)](#endpoints-http-sse-y-websocket-gradmix-api-y-apicatalog)
 6. [Cómo Correr, Compilar y Probar la App](#cómo-correr-compilar-y-probar-la-app)
 7. [Decisiones Clave de Ingeniería](#decisiones-clave-de-ingeniería)
 8. [Glosario Técnico](#glosario-técnico)
@@ -27,7 +27,8 @@
 | **Motor de Audio** | **Web Audio API** + `<audio>` (`MediaElementAudioSourceNode`) + `AudioContext` | Doble deck (`A`/`B`), mezcla Equal-Power (`cos`/`sin`), compresor maestro y arranque rápido por streaming. |
 | **Almacenamiento Local** | **OPFS** (`Origin Private File System`) + **IndexedDB** (`idb-keyval ^6.3.0`) | Audio binario almacenado en OPFS sin saturar RAM; metadatos, playlists y ajustes en IndexedDB. |
 | **Análisis de BPM** | **Web Workers** (`bpmWorker.ts` / `bpmAnalyzer.ts`) + **web-audio-beat-detector** | Cola en segundo plano que detecta BPM y duración sin bloquear el hilo principal. |
-| **Backend Embebido** | Plugin personalizado de Vite ([vite-room-plugin.ts](gradmix-pwa/vite-room-plugin.ts)) | Proxy de catálogo (SoundCloud / Audius), servidor temporal de paquetes (`.gradmix` / links) y salas en vivo (HTTP + SSE + WebSocket RFC 6455). |
+| **Catálogo Remoto** | Funciones serverless de Vercel ([server/catalog.ts](gradmix-pwa/server/catalog.ts)) + plugin de Vite en dev ([vite-catalog-plugin.ts](gradmix-pwa/vite-catalog-plugin.ts)) | Proxy y caché de SoundCloud / Audius (`/api/catalog/*`) en el mismo origen del sitio. |
+| **Backend de Salas y Links** | Worker de Cloudflare ([gradmix-api](gradmix-api)): Durable Objects + R2 | Salas en vivo (HTTP + SSE + WebSocket) y paquetes de playlist con audio, con TTL y autodestrucción. |
 | **Contenedor Nativo** | **Capacitor** (`^8.6.2`) | Configuración base (`com.gradmix.app`, `webDir: dist`) en `capacitor.config.ts`. |
 | **Pruebas** | **Node Test Runner** (`node --test tests/*.test.ts`) | Pruebas unitarias de cola, buscador recursivo, idempotencia, contenedores MP4/ADTS, tags ID3/MP4 y `.zip`. |
 
@@ -35,7 +36,7 @@
 
 ## Mapa de Arquitectura
 
-La aplicación sigue una arquitectura **local-first con estado unidireccional en frontend** y un **micro-backend acoplado al ciclo dev/preview de Vite**:
+La aplicación sigue una arquitectura **local-first con estado unidireccional en frontend**, un **catálogo serverless en el propio sitio** y un **backend de salas en Cloudflare Workers**:
 
 ```mermaid
 flowchart TB
@@ -52,10 +53,14 @@ flowchart TB
         STORE["OPFS (audio binario) + IndexedDB (playlists, pistas, ajustes)"]
     end
 
-    subgraph Server["Servidor Vite + gradmixRoomPlugin (Node.js)"]
+    subgraph Site["Sitio (Vercel; plugin de Vite en dev)"]
         API_CAT["/api/catalog/* (trending, search, stream + caché RAM)"]
-        API_BND["/api/bundles/* (almacén temporal de playlists por link)"]
+    end
+
+    subgraph Worker["Worker gradmix-api (Cloudflare)"]
         API_ROOM["/api/rooms/* (HTTP + SSE /events + WebSocket /ws)"]
+        API_BND["/api/bundles/* (manifiesto + audio)"]
+        R2[("R2 gradmix-audio")]
     end
 
     subgraph External["Proveedores Externos"]
@@ -76,6 +81,8 @@ flowchart TB
     UI -->|"/api/catalog/*"| API_CAT
     UI -->|"/api/bundles/*"| API_BND
     UI -->|"/api/rooms/* + WS"| API_ROOM
+    API_BND --> R2
+    API_ROOM --> R2
     API_CAT --> CONT
     API_CAT --> SC
     API_CAT --> AU
@@ -110,13 +117,23 @@ flowchart TB
 ```text
 DjARC/
 ├── capacitor.config.json          # Metadatos Capacitor en raíz
-├── docs/                          # Material de diseño e imágenes de referencia
+├── docs/                          # Material de diseño, imágenes y guía de despliegue
 ├── package.json                   # Dependencias compartidas en raíz
+├── gradmix-api/                   # Worker de Cloudflare: salas y links de playlist
+│   ├── src/index.ts               # Router, CORS y creación de códigos
+│   ├── src/room.ts                # RoomDurableObject (SSE, WebSocket, audio en R2)
+│   ├── src/bundle.ts              # BundleDurableObject (paquetes con TTL 24 h)
+│   ├── src/shared.ts              # Tipos, PBKDF2 y utilidades
+│   ├── scripts/smoke.mjs          # 36 comprobaciones end-to-end del API
+│   └── wrangler.jsonc             # Bindings, migraciones y dominio api.gradmix.*
 └── gradmix-pwa/                   # Aplicación principal (Vite + Svelte + PWA)
-    ├── vite.config.ts             # Plugins Tailwind, Svelte, gradmixRoomPlugin y VitePWA
-    ├── vite-room-plugin.ts        # Middleware HTTP/SSE/WebSocket (/api/catalog, /api/bundles, /api/rooms)
+    ├── vite.config.ts             # Plugins Tailwind, Svelte, gradmixCatalogPlugin, VitePWA y proxy al Worker
+    ├── vite-catalog-plugin.ts     # Middleware de /api/catalog/* en dev/preview
+    ├── server/catalog.ts          # Lógica de catálogo compartida con Vercel
+    ├── server/api/catalog/*.ts    # Entradas de las funciones serverless
+    ├── scripts/build-api.mjs      # Empaqueta las funciones en api/*.js para Vercel
     ├── capacitor.config.ts        # Configuración Capacitor (com.gradmix.app -> dist/)
-    ├── package.json               # Scripts: dev, build, preview, check
+    ├── package.json               # Scripts: dev, dev:api, build, preview, check
     ├── public/
     │   ├── manifest.json          # Manifiesto PWA instalable
     │   ├── sw-media-controls.js   # Listener notificationclick en SW para controles multimedia locales
@@ -186,16 +203,24 @@ DjARC/
 | **Compresión `.zip` y lectura/extracción `.zip`** | [zip.ts](gradmix-pwa/src/lib/utils/zip.ts) y [bundle.ts](gradmix-pwa/src/lib/utils/bundle.ts) | `buildZipBlobFromEntries`, `parsePlaylistZipFile`, `buildPlaylistZipBlob`, `buildGradmixBundleBlob`. |
 | **Reparación de `.m4a` fragmentados, filtros DRM o formatos** | [audioContainer.ts](gradmix-pwa/src/lib/audio/audioContainer.ts) y [format.ts](gradmix-pwa/src/lib/utils/format.ts) | `inspectAudioContainer`, `remuxFragmentedMp4ToStandardM4a`, `extractAdtsFromFragmentedMp4`, `orderSoundCloudTranscodings`. |
 | **Buscador instantáneo (local + catálogo)** | [searchEngine.ts](gradmix-pwa/src/lib/search/searchEngine.ts) y [SearchResultsView.svelte](gradmix-pwa/src/components/SearchResultsView.svelte) | `IsolatedSearchEngine`, `normalizeSearchText`, `recursiveSubsequenceScore`. |
-| **Proxy SoundCloud/Audius, cachés de streaming o Salas Colaborativas** | [vite-room-plugin.ts](gradmix-pwa/vite-room-plugin.ts) | `resolveSoundCloudClientId`, `streamSoundCloudFullTrack`, `searchSoundCloudCatalog`, `handleBundleApi`, `handleHttp`, servidor WebSocket `/api/rooms/:code/ws`. |
+| **Catálogo SoundCloud/Audius y cachés de streaming** | [server/catalog.ts](gradmix-pwa/server/catalog.ts) | `createCatalogHandler`, `resolveSoundCloudClientId`, `streamSoundCloudFullTrack`, `searchSoundCloudCatalog`. |
+| **Salas colaborativas, permisos y links de playlist** | [gradmix-api/src/index.ts](gradmix-api/src/index.ts), [room.ts](gradmix-api/src/room.ts), [bundle.ts](gradmix-api/src/bundle.ts) | `RoomDurableObject`, `BundleDurableObject`, `handleJoin`, `handleTrackUpload`, `handleTrackAudio`. |
 | **Almacenamiento OPFS / IndexedDB y monitoreo de cuota** | [opfsStorage.ts](gradmix-pwa/src/lib/storage/opfsStorage.ts), [db.ts](gradmix-pwa/src/lib/storage/db.ts), [MonitoringView.svelte](gradmix-pwa/src/components/MonitoringView.svelte) | `saveAudioFile`, `readAudioBlob`, `getStorageUsage`, `clearAllAudioFiles`. |
 | **Notificaciones locales y MediaSession (sin VAPID)** | [mediaSession.ts](gradmix-pwa/src/lib/audio/mediaSession.ts) y [sw-media-controls.js](gradmix-pwa/public/sw-media-controls.js) | `registerMediaSessionHandlers`, `updateMediaSessionMetadata`, evento `notificationclick` en SW. |
 | **Bloqueos anti doble clic / peticiones idempotentes** | [idempotency.ts](gradmix-pwa/src/lib/utils/idempotency.ts) | `IdempotentController` (`run`, `minLockMs`). |
 
 ---
 
-## Endpoints HTTP, SSE y WebSocket (`vite-room-plugin.ts`)
+## Endpoints HTTP, SSE y WebSocket (`gradmix-api` y `/api/catalog`)
 
-El plugin [vite-room-plugin.ts](gradmix-pwa/vite-room-plugin.ts) corre embebido tanto en `vite dev` como en `vite preview` (manteniendo estado en memoria y caché temporal de servidor).
+El API tiene dos piezas con ciclos de vida distintos:
+
+| Ruta | Dónde vive en producción | Dónde vive en desarrollo |
+| :--- | :--- | :--- |
+| `/api/catalog/*` | Funciones serverless de Vercel (mismo origen del sitio) | [vite-catalog-plugin.ts](gradmix-pwa/vite-catalog-plugin.ts) |
+| `/api/rooms/*`, `/api/bundles/*` | Worker `gradmix-api` → `https://api.gradmix.arc03.online` | El mismo Worker en local (`npm run dev:api`), proxeado por Vite a `127.0.0.1:8787` |
+
+El frontend siempre usa rutas relativas (`apiUrl()` en [base.ts](gradmix-pwa/src/lib/api/base.ts)): en desarrollo Vite las proxea al Worker local y en producción `VITE_API_BASE` apunta al Worker desplegado. **No hay dos implementaciones**: lo que pruebas en local es el mismo código que corre en Cloudflare.
 
 ### Catálogo Remoto (`/api/catalog/*`)
 - `GET /api/catalog/trending?limit=16`: devuelve pistas populares (priorizando catálogo SoundCloud y respaldo Audius) con caché TTL en servidor.
@@ -203,18 +228,22 @@ El plugin [vite-room-plugin.ts](gradmix-pwa/vite-room-plugin.ts) corre embebido 
 - `GET /api/catalog/stream?trackId=<id>&host=<opcional>`: descarga/ensambla el stream completo, descarta pistas cifradas con DRM, remuxa `fMP4 -> .m4a` estándar si aplica y lo cachea en RAM temporal para acelerar repeticiones.
 
 ### Empaquetado Temporal de Playlists por Enlace (`/api/bundles`)
-- `POST /api/bundles`: recibe un paquete `.gradmix` y devuelve un `bundleId` temporal para compartir por URL (`?import=...`).
-- `GET /api/bundles/:id`: descarga el paquete compartido para importarlo automáticamente en el navegador receptor.
+- `POST /api/bundles`: crea el manifiesto del paquete y devuelve un `id` temporal para compartir por URL (`?import=...`).
+- `POST /api/bundles/:id/tracks/:index`: sube el audio de cada pista a R2 (35 MB por pista, hasta 300).
+- `GET /api/bundles/:id`: devuelve el manifiesto; `GET /api/bundles/:id/tracks/:index` descarga el audio.
+- Todo el paquete expira y se borra de R2 a las 24 h.
 
 ### Salas Colaborativas Temporales (`/api/rooms/*`)
-- `POST /api/rooms`: crea una sala temporal (hasta 10 h, idempotente vía header `Idempotency-Key`).
-- `GET /api/rooms/:code`: consulta el estado público actual de la sala.
-- `DELETE /api/rooms/:code`: cierra la sala (solo host).
-- `POST /api/rooms/:code/join`: une a un invitado mediante código+clave o token directo de invitación (`token`).
-- `POST /api/rooms/:code/permissions`: actualiza privilegios granulares de participantes (`canSkip`, `canPause`, `canAdd`, `canRemove`).
-- `POST /api/rooms/:code/tracks`, `GET /api/rooms/:code/tracks/:id/audio`, `DELETE /api/rooms/:code/tracks/:id`: gestión de cola compartida de la sala.
-- `POST /api/rooms/:code/command` y `POST /api/rooms/:code/state`: comandos remotos (`play`, `pause`, `next`, `prev`) y sincronización de estado del host.
-- `GET /api/rooms/:code/events` (**SSE**) y `WS /api/rooms/:code/ws` (**WebSocket RFC 6455**): transmisión en tiempo real de participantes, privilegios, pistas, estado y comandos.
+- `POST /api/rooms`: crea una sala temporal (0,25 h a 10 h, código personalizable).
+- `GET /api/rooms/:code?participantId=...`: consulta el estado público actual de la sala.
+- `DELETE /api/rooms/:code`: cierra la sala (solo host); borra su audio de R2.
+- `POST /api/rooms/:code/join`: une a un invitado mediante clave o `inviteToken`.
+- `POST /api/rooms/:code/permissions`: actualiza privilegios granulares (`canSkip`, `canPause`, `canAdd`, `canRemove`).
+- `POST /api/rooms/:code/tracks`, `GET /api/rooms/:code/tracks/:id/audio`, `DELETE /api/rooms/:code/tracks/:id`: cola compartida. El host descarga el audio **una sola vez**; después se marca `hasAudioRelay: false`.
+- `POST /api/rooms/:code/command` y `POST /api/rooms/:code/state`: comandos remotos (`toggle-play`, `skip-next`, `previous`) y sincronización del host.
+- `GET /api/rooms/:code/events` (**SSE**) y `WS /api/rooms/:code/ws` (**WebSocket**): participantes, privilegios, pistas, estado y comandos en tiempo real.
+
+La verificación automática de todo esto vive en [gradmix-api/scripts/smoke.mjs](gradmix-api/scripts/smoke.mjs).
 
 ---
 
@@ -230,9 +259,15 @@ npm install
 
 ### 2. Modo Desarrollo (HMR / recarga en caliente)
 ```powershell
-cd gradmix-pwa
-npm run dev
+cd gradmix-api
+npm run dev          # Worker en http://127.0.0.1:8787 (salas y links)
+
+cd ../gradmix-pwa
+npm run dev          # App en http://localhost:5173
 ```
+- `npm run dev:api` desde `gradmix-pwa/` levanta el Worker sin cambiar de carpeta.
+- Vite proxea `/api/rooms` y `/api/bundles` a `127.0.0.1:8787`, así que el navegador ve un solo origen.
+- Si el Worker no está corriendo, las salas y los links fallan con error de red; el resto de la app (UI, OPFS, catálogo) funciona igual.
 - Disponible en `http://localhost:5173` y en tu IP de red local (`server.host: true`).
 - En este modo el Service Worker PWA permanece desactivado (`devOptions.enabled: false`).
 
@@ -243,7 +278,7 @@ npm run build
 npm run preview
 ```
 - `vite build` genera la aplicación optimizada y el Service Worker en `gradmix-pwa/dist/`.
-- `vite preview` levanta la PWA completa con Service Worker y backend `/api/*` en `http://localhost:4173` (puedes fijar puerto con `npx vite preview --host 127.0.0.1 --port 4173 --strictPort`).
+- `vite preview` levanta la PWA completa con Service Worker y `/api/*` en `http://localhost:4173` (proxea salas/links al Worker local, sirve el catálogo con el plugin).
 
 ### 4. Exponer por HTTPS para probar PWA / móviles (`cloudflared`)
 Las APIs de PWA instalable, OPFS persistente y `WakeLock` requieren contexto seguro (`https://` o `localhost`). Para probar desde un celular en red externa:

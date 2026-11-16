@@ -33,7 +33,7 @@ Navegador (PWA Svelte 5)
 | `gradmix-pwa/server/catalog.ts` | Lógica del catálogo (compartida por plugin de Vite y Vercel). |
 | `gradmix-pwa/server/api/catalog/*.ts` | Entradas de las funciones serverless. |
 | `gradmix-pwa/scripts/build-api.mjs` | Empaqueta cada función en `api/<ruta>.js` autocontenido (generado, en `.gitignore`). |
-| `gradmix-pwa/vite-room-plugin.ts` | Servidor de desarrollo: salas, SSE, WS y bundles en `localhost`. |
+| `gradmix-pwa/vite-catalog-plugin.ts` | Servidor de desarrollo de `/api/catalog/*` (Vite proxea salas y bundles al Worker local). |
 | `gradmix-pwa/src/lib/api/base.ts` | `apiUrl()` / `apiWsUrl()` con `VITE_API_BASE`. |
 | `gradmix-api/src/index.ts` | Router del Worker, CORS y creación de códigos. |
 | `gradmix-api/src/room.ts` | `RoomDurableObject`: estado, join, SSE, WS, audio, permisos, comandos, alarma. |
@@ -120,22 +120,21 @@ npx vercel env add VITE_API_BASE production --value "https://api.gradmix.arc03.o
 ## 4. Desarrollo local
 
 ```powershell
-cd gradmix-pwa
-npm run dev     # plugin de Vite: /api/rooms, /api/bundles y /api/catalog
-```
-
-El Worker también se puede correr aparte:
-
-```powershell
 cd gradmix-api
-npx wrangler dev --port 8787
-node scripts/smoke.mjs
+npm run dev          # Worker en http://127.0.0.1:8787
+
+cd ../gradmix-pwa
+npm run dev          # app en http://localhost:5173
 ```
 
-Y apuntar el frontend con un `.env.local`:
+`vite.config.ts` proxea `/api/rooms` y `/api/bundles` a `127.0.0.1:8787` (con WebSocket
+incluido), así que en desarrollo se usa **el mismo código** que en producción. El
+catálogo (`/api/catalog/*`) sí lo sirve el plugin de Vite.
+
+También se puede apuntar el frontend a un Worker remoto con un `.env.local`:
 
 ```
-VITE_API_BASE=http://127.0.0.1:8787
+VITE_API_BASE=https://api.gradmix.arc03.online
 ```
 
 ---

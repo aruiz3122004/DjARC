@@ -35,11 +35,17 @@ async function ensureDirPermission(
 ): Promise<boolean> {
   try {
     if (typeof handle.queryPermission === 'function') {
-      const state = await handle.queryPermission({ mode });
+      const state = await Promise.race([
+        handle.queryPermission({ mode }),
+        new Promise<'prompt'>((resolve) => setTimeout(() => resolve('prompt'), 2500)),
+      ]);
       if (state === 'granted') return true;
     }
     if (typeof handle.requestPermission === 'function') {
-      const next = await handle.requestPermission({ mode });
+      const next = await Promise.race([
+        handle.requestPermission({ mode }),
+        new Promise<'denied'>((resolve) => setTimeout(() => resolve('denied'), 8000)),
+      ]);
       return next === 'granted';
     }
     return true;

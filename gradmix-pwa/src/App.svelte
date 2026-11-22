@@ -1725,13 +1725,6 @@
       }
     }
 
-    if (listTracks.some((t) => isDeviceAudioKey(t.opfsKey))) {
-      const devDir = await getDeviceDirectoryHandle('read');
-      if (!devDir) {
-        throw new Error('Autoriza el acceso a tu carpeta interna en Monitoreo para compartir estas pistas.');
-      }
-    }
-
     // Crear solo el manifiesto (~150 ms) para entregar el link de inmediato y subir audios en paralelo
     const { keyBytes, keyToken } = generateShareKey();
     const manifestTracks: BundleTrackManifest[] = listTracks.map((t) => ({
@@ -1745,18 +1738,31 @@
       byteLength: t.sizeBytes,
     }));
 
-    const createRes = await fetch(apiUrl('/api/bundles'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Idempotency-Key': createRequestId(),
-      },
-      body: JSON.stringify({
-        playlistName: pl.name,
-        block: pl.block,
-        tracks: manifestTracks,
-      }),
-    });
+    const createCtrl = new AbortController();
+    const createTimer = window.setTimeout(() => createCtrl.abort(), 12_000);
+    let createRes: Response;
+    try {
+      createRes = await fetch(apiUrl('/api/bundles'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': createRequestId(),
+        },
+        body: JSON.stringify({
+          playlistName: pl.name,
+          block: pl.block,
+          tracks: manifestTracks,
+        }),
+        signal: createCtrl.signal,
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw new Error('Tiempo de espera agotado al conectar con el servidor de enlaces.');
+      }
+      throw err;
+    } finally {
+      window.clearTimeout(createTimer);
+    }
     const createData = (await createRes.json()) as { id?: string; error?: string };
     if (!createRes.ok || !createData.id) {
       throw new Error(createData.error || 'No se pudo generar el enlace cifrado.');
@@ -1777,14 +1783,22 @@
         if (encrypted.byteLength > 35 * 1024 * 1024) {
           throw new Error(`"${t.title}" supera el límite de 35 MB.`);
         }
-        const upRes = await fetch(
-          apiUrl(`/api/bundles/${encodeURIComponent(bundleId)}/tracks/${idx}`),
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/octet-stream' },
-            body: encrypted,
-          }
-        );
+        const upCtrl = new AbortController();
+        const upTimer = window.setTimeout(() => upCtrl.abort(), 45_000);
+        let upRes: Response;
+        try {
+          upRes = await fetch(
+            apiUrl(`/api/bundles/${encodeURIComponent(bundleId)}/tracks/${idx}`),
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/octet-stream' },
+              body: encrypted,
+              signal: upCtrl.signal,
+            }
+          );
+        } finally {
+          window.clearTimeout(upTimer);
+        }
         if (!upRes.ok) {
           throw new Error(`Fallo al preparar "${t.title}".`);
         }
@@ -1820,7 +1834,10 @@
       const { shareUrl, runBackgroundUpload } = await prepareEncryptedPlaylistShare(pl);
       lastExportedLink = shareUrl;
       try {
-        await navigator.clipboard.writeText(shareUrl);
+        await Promise.race([
+          navigator.clipboard.writeText(shareUrl),
+          new Promise<void>((resolve) => window.setTimeout(resolve, 400)),
+        ]);
       } catch {
         // Ignorar bloqueo de portapapeles
       }

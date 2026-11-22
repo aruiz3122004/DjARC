@@ -1692,7 +1692,10 @@
     persistSettings({ masterVolume: vol });
   }
 
-  async function generateEncryptedPlaylistShareUrl(pl: Playlist): Promise<string> {
+  async function prepareEncryptedPlaylistShare(pl: Playlist): Promise<{
+    shareUrl: string;
+    runBackgroundUpload: (() => Promise<void>) | null;
+  }> {
     const listTracks = getOrderedTracksForPlaylist(pl);
     if (listTracks.length === 0) {
       throw new Error('La playlist está vacía.');
@@ -1718,11 +1721,18 @@
         }))
       );
       if (zeroServerUrl.length <= 1850) {
-        return zeroServerUrl;
+        return { shareUrl: zeroServerUrl, runBackgroundUpload: null };
       }
     }
 
-    // Modo cifrado E2EE (AES-256-GCM con clave #k en fragmento) + relevo efímero 24h en R2 para archivos locales
+    if (listTracks.some((t) => isDeviceAudioKey(t.opfsKey))) {
+      const devDir = await getDeviceDirectoryHandle('read');
+      if (!devDir) {
+        throw new Error('Autoriza el acceso a tu carpeta interna en Monitoreo para compartir estas pistas.');
+      }
+    }
+
+    // Crear solo el manifiesto (~150 ms) para entregar el link de inmediato y subir audios en paralelo
     const { keyBytes, keyToken } = generateShareKey();
     const manifestTracks: BundleTrackManifest[] = listTracks.map((t) => ({
       title: t.title,
@@ -1752,64 +1762,104 @@
       throw new Error(createData.error || 'No se pudo generar el enlace cifrado.');
     }
 
-    for (let i = 0; i < listTracks.length; i += 1) {
-      const t = listTracks[i];
-      bundleStatusText = `Cifrando y preparando (${i + 1}/${listTracks.length}): ${t.title}`;
-      const buf = await readAudioArrayBuffer(t.opfsKey);
-      const encrypted = await encryptShareBytes(buf, keyBytes);
-      if (encrypted.byteLength > 35 * 1024 * 1024) {
-        throw new Error(`"${t.title}" supera el límite de 35 MB.`);
-      }
-      const upRes = await fetch(
-        apiUrl(`/api/bundles/${encodeURIComponent(createData.id)}/tracks/${i}`),
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/octet-stream' },
-          body: encrypted,
-        }
-      );
-      if (!upRes.ok) {
-        throw new Error(`Fallo al preparar "${t.title}".`);
-      }
-      importProgress = { done: i + 1, total: listTracks.length };
-    }
+    const bundleId = createData.id;
+    const shareUrl = `${window.location.origin}/?import=${encodeURIComponent(bundleId)}#k=${encodeURIComponent(keyToken)}`;
 
-    return `${window.location.origin}/?import=${encodeURIComponent(createData.id)}#k=${encodeURIComponent(keyToken)}`;
+    const runBackgroundUpload = async () => {
+      let nextIndex = 0;
+      let completed = 0;
+      const concurrency = Math.min(4, listTracks.length);
+
+      const uploadOne = async (idx: number) => {
+        const t = listTracks[idx];
+        const buf = await readAudioArrayBuffer(t.opfsKey);
+        const encrypted = await encryptShareBytes(buf, keyBytes);
+        if (encrypted.byteLength > 35 * 1024 * 1024) {
+          throw new Error(`"${t.title}" supera el límite de 35 MB.`);
+        }
+        const upRes = await fetch(
+          apiUrl(`/api/bundles/${encodeURIComponent(bundleId)}/tracks/${idx}`),
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: encrypted,
+          }
+        );
+        if (!upRes.ok) {
+          throw new Error(`Fallo al preparar "${t.title}".`);
+        }
+        completed += 1;
+        importProgress = { done: completed, total: listTracks.length };
+        bundleStatusText = `Enlace listo · sincronizando audios en segundo plano (${completed}/${listTracks.length})...`;
+      };
+
+      const workers = Array.from({ length: concurrency }, async () => {
+        while (nextIndex < listTracks.length) {
+          const idx = nextIndex;
+          nextIndex += 1;
+          await uploadOne(idx);
+        }
+      });
+
+      await Promise.all(workers);
+    };
+
+    return { shareUrl, runBackgroundUpload };
   }
 
-  async function handleShareWhatsApp(targetPlaylist?: Playlist) {
-    const pl = targetPlaylist ?? activePlaylist;
-    if (!pl || bundleBusy) return;
+  async function startSharedLinkFlow(pl: Playlist, openWhatsApp: boolean) {
+    if (bundleBusy) return;
     const listTracks = getOrderedTracksForPlaylist(pl);
     if (listTracks.length === 0) return;
 
     bundleBusy = true;
     lastExportedLink = null;
-    importProgress = { done: 0, total: listTracks.length };
-    bundleStatusText = `Creando enlace cifrado para "${pl.name}"...`;
+    bundleStatusText = `Generando enlace cifrado para "${pl.name}"...`;
 
     try {
-      const shareUrl = await generateEncryptedPlaylistShareUrl(pl);
+      const { shareUrl, runBackgroundUpload } = await prepareEncryptedPlaylistShare(pl);
       lastExportedLink = shareUrl;
       try {
         await navigator.clipboard.writeText(shareUrl);
       } catch {
         // Ignorar bloqueo de portapapeles
       }
-      const { url } = buildWhatsAppShareUrl(pl, listTracks, shareUrl);
-      const popup = window.open(url, '_blank', 'noopener,noreferrer');
-      showToast(
-        popup
-          ? 'Link cifrado generado y abierto en WhatsApp.'
-          : 'Link cifrado copiado. Si WhatsApp no abrió, pulsa Exportar → WhatsApp.'
-      );
+
+      if (openWhatsApp) {
+        const { url } = buildWhatsAppShareUrl(pl, listTracks, shareUrl);
+        const popup = window.open(url, '_blank', 'noopener,noreferrer');
+        showToast(
+          popup
+            ? 'Link cifrado generado y abierto en WhatsApp.'
+            : 'Link cifrado copiado. Pulsa WhatsApp abajo para enviarlo.'
+        );
+      } else {
+        showToast('Link cifrado de playlist copiado al portapapeles.');
+      }
+
+      if (runBackgroundUpload) {
+        importProgress = { done: 0, total: listTracks.length };
+        bundleStatusText = `Enlace listo · sincronizando audios (0/${listTracks.length})...`;
+        try {
+          await runBackgroundUpload();
+          showToast('Todos los audios del enlace quedaron listos.');
+        } catch (uploadErr) {
+          showToast(uploadErr instanceof Error ? uploadErr.message : 'Fallo parcial subiendo audios.');
+        }
+      }
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'No se pudo generar el link de WhatsApp.');
+      showToast(err instanceof Error ? err.message : 'No se pudo generar el link de playlist.');
     } finally {
       bundleBusy = false;
       bundleStatusText = null;
       importProgress = null;
     }
+  }
+
+  async function handleShareWhatsApp(targetPlaylist?: Playlist) {
+    const pl = targetPlaylist ?? activePlaylist;
+    if (!pl) return;
+    await startSharedLinkFlow(pl, true);
   }
 
   function getOrderedTracksForPlaylist(pl: Playlist): Track[] {
@@ -1904,30 +1954,7 @@
   }
 
   async function handleExportBundleLink(pl: Playlist) {
-    const listTracks = getOrderedTracksForPlaylist(pl);
-    if (listTracks.length === 0 || bundleBusy) return;
-
-    bundleBusy = true;
-    lastExportedLink = null;
-    importProgress = { done: 0, total: listTracks.length };
-    bundleStatusText = `Cifrando "${pl.name}" para link...`;
-
-    try {
-      const shareUrl = await generateEncryptedPlaylistShareUrl(pl);
-      lastExportedLink = shareUrl;
-      try {
-        await navigator.clipboard.writeText(shareUrl);
-        showToast('Link cifrado de playlist copiado al portapapeles.');
-      } catch {
-        showToast('Link cifrado de playlist generado.');
-      }
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Error al generar link de playlist.');
-    } finally {
-      bundleBusy = false;
-      bundleStatusText = null;
-      importProgress = null;
-    }
+    await startSharedLinkFlow(pl, false);
   }
 
   async function handleExportBundleFile(pl: Playlist) {
@@ -2091,13 +2118,18 @@
         };
         registerEphemeralTrack(tempTrack);
         sharedTrackFetchers.set(trackId, async () => {
-          const trackRes = await fetch(
-            apiUrl(`/api/bundles/${encodeURIComponent(parsed.bundleId)}/tracks/${idx}`)
-          );
-          if (!trackRes.ok) {
-            throw new Error(`No se pudo cargar "${item.title}".`);
+          let trackRes: Response | null = null;
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            trackRes = await fetch(
+              apiUrl(`/api/bundles/${encodeURIComponent(parsed.bundleId)}/tracks/${idx}`)
+            );
+            if (trackRes.ok) break;
+            if (trackRes.status !== 404 || attempt === 7) {
+              throw new Error(`No se pudo cargar "${item.title}".`);
+            }
+            await new Promise((r) => setTimeout(r, 1200));
           }
-          const rawBuf = await trackRes.arrayBuffer();
+          const rawBuf = await trackRes!.arrayBuffer();
           if (keyBytes) {
             const plainBuf = await decryptShareBytes(rawBuf, keyBytes);
             return new Blob([plainBuf], { type: mimeType });

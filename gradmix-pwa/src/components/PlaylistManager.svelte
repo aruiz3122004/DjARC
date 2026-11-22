@@ -702,33 +702,33 @@
                     </button>
                   </div>
                 </div>
+              </div>
+            {/if}
 
-                {#if lastExportedLink}
-                  <div class="flex flex-wrap items-center gap-1.5 border-t border-zinc-200 pt-2 dark:border-zinc-900">
-                    <input
-                      type="text"
-                      readonly
-                      value={lastExportedLink}
-                      onclick={(e) => (e.currentTarget as HTMLInputElement).select()}
-                      class="min-w-[140px] flex-1 border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-mono text-zinc-800 focus:outline-none dark:border-zinc-800 dark:bg-black dark:text-zinc-200"
-                    />
-                    <button
-                      type="button"
-                      onclick={copyLastLink}
-                      class="border border-zinc-300 bg-zinc-100 px-2.5 py-1 text-[11px] font-medium text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
-                    >
-                      {copiedExportLink ? 'Copiado' : 'Copiar'}
-                    </button>
-                    <a
-                      href={`https://wa.me/?text=${encodeURIComponent(`GradMix - Escucha o descarga esta playlist:\n\n${lastExportedLink}`)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="inline-flex items-center gap-1 border border-emerald-600/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400"
-                    >
-                      WhatsApp
-                    </a>
-                  </div>
-                {/if}
+            {#if lastExportedLink}
+              <div class="mb-3 flex flex-wrap items-center gap-1.5 border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950">
+                <input
+                  type="text"
+                  readonly
+                  value={lastExportedLink}
+                  onclick={(e) => (e.currentTarget as HTMLInputElement).select()}
+                  class="min-w-[140px] flex-1 border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-mono text-zinc-800 focus:outline-none dark:border-zinc-800 dark:bg-black dark:text-zinc-200"
+                />
+                <button
+                  type="button"
+                  onclick={copyLastLink}
+                  class="border border-zinc-300 bg-zinc-100 px-2.5 py-1 text-[11px] font-medium text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                >
+                  {copiedExportLink ? 'Copiado' : 'Copiar'}
+                </button>
+                <a
+                  href={`https://wa.me/?text=${encodeURIComponent(`GradMix - Escucha o descarga esta playlist:\n\n${lastExportedLink}`)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center gap-1 border border-emerald-600/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400"
+                >
+                  WhatsApp
+                </a>
               </div>
             {/if}
 

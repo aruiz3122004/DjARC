@@ -243,9 +243,8 @@
             disabled={clearing}
             class="inline-flex items-center gap-1.5 border border-red-800 bg-red-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-800 disabled:opacity-40"
           >
-            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 6h18M9 6V4h6v2" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round" />
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M9 3h6l1 2h4v2H4V5h4l1-2zm-3 6h12l-1 11a2 2 0 0 1-2 1.8H9a2 2 0 0 1-2-1.8L6 9zm4 2v7h1.5v-7H10zm2.5 0v7H14v-7h-1.5z" />
             </svg>
             <span>{clearing ? 'Borrando...' : 'Borrar datos'}</span>
           </button>

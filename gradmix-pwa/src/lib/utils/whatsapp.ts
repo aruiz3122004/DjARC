@@ -1,5 +1,5 @@
 import type { AppSettings, Playlist, SessionExportPayload, Track } from '../types';
-import { formatDurationTotal, formatTime } from './format';
+import { formatDurationTotal } from './format';
 
 /**
  * Construye el mensaje corto y enlace `https://wa.me/?text=...` con el link cifrado
@@ -12,9 +12,10 @@ export function buildWhatsAppShareUrl(
 ): { url: string; message: string } {
   const totalSec = tracks.reduce((sum, t) => sum + (t.duration || 0), 0);
   const message = [
-    `🎧 *GradMix — ${playlist.name}*`,
-    `🎵 ${tracks.length} canciones (${formatDurationTotal(totalSec)})`,
-    `🔒 Enlace cifrado — abre para reproducir al instante sin descargar o guardar la playlist:`,
+    `*GradMix - ${playlist.name}*`,
+    `${tracks.length} canciones (${formatDurationTotal(totalSec)})`,
+    `Enlace cifrado - abre para reproducir o guardar la playlist:`,
+    '',
     shareUrl,
   ].join('\n');
 

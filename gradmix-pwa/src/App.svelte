@@ -1700,9 +1700,14 @@
 
     // Modo 0-servidor: si TODAS las pistas provienen del catálogo público remoto, ciframos en la URL
     const allFromCatalog = listTracks.every((t) => Boolean(t.catalogId));
+    const shareBaseOrigin =
+      window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        ? 'https://gradmix.arc03.online'
+        : window.location.origin;
+
     if (allFromCatalog) {
       const zeroServerUrl = await encodeZeroServerPlaylistLink(
-        window.location.origin,
+        shareBaseOrigin,
         pl.name,
         pl.block,
         listTracks.map((t) => ({

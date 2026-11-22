@@ -219,15 +219,15 @@
 
         {#if upNextTracks.length > 0}
           <div class="border-b border-zinc-200 bg-zinc-100/80 dark:border-zinc-800 dark:bg-zinc-950">
-            <div class="px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-700 dark:text-cyan-400">
+            <div class="px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-cyan-700 dark:text-cyan-400">
               Siguientes en cola ({upNextTracks.length})
             </div>
-            <div class="max-h-32 overflow-y-auto">
+            <div class="{hasPlaylistInPlayback ? 'max-h-[30dvh]' : 'max-h-[58dvh]'} overflow-y-auto">
               {#each upNextTracks as qTrk, qIdx (`q-${qIdx}-${qTrk.id}`)}
                 <button
                   type="button"
                   onclick={() => onPlayTrack(qTrk.id)}
-                  class="flex w-full items-center gap-2.5 border-t border-zinc-200/70 px-4 py-1.5 text-left hover:bg-zinc-200/60 dark:border-zinc-900 dark:hover:bg-zinc-900"
+                  class="flex w-full items-center gap-2.5 border-t border-zinc-200/70 px-4 py-2.5 text-left hover:bg-zinc-200/60 dark:border-zinc-900 dark:hover:bg-zinc-900"
                 >
                   <span class="w-4 shrink-0 text-[10px] font-semibold tabular-nums text-cyan-600 dark:text-cyan-400">
                     {qIdx + 1}
@@ -259,9 +259,9 @@
               class="w-full border border-zinc-300 bg-white px-3 py-1.5 text-xs text-zinc-900 placeholder-zinc-400 focus:border-cyan-500 focus:outline-none dark:border-zinc-800 dark:bg-black dark:text-white"
             />
           </div>
-          <div class="max-h-52 overflow-y-auto border-b border-zinc-300 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950">
+          <div class="max-h-[56dvh] overflow-y-auto border-b border-zinc-300 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950">
             {#if filteredPlaylistTracks.length === 0}
-              <p class="py-4 text-center text-xs text-zinc-400">
+              <p class="py-6 text-center text-xs text-zinc-400">
                 Sin coincidencias en esta playlist.
               </p>
             {:else}
@@ -271,7 +271,7 @@
                 <button
                   type="button"
                   onclick={() => onPlayTrack(plTrk.id, idx)}
-                  class="flex w-full items-center gap-2.5 border-b border-zinc-200/70 px-4 py-2 text-left transition last:border-b-0 dark:border-zinc-900 {isPlayingItem
+                  class="flex w-full items-center gap-2.5 border-b border-zinc-200/70 px-4 py-2.5 text-left transition last:border-b-0 dark:border-zinc-900 {isPlayingItem
                     ? 'bg-cyan-500/15 text-cyan-800 dark:text-cyan-300'
                     : isNextItem
                       ? 'bg-zinc-100/90 dark:bg-zinc-900/70'

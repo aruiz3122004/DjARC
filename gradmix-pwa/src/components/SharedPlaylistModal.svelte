@@ -37,17 +37,6 @@
     <div class="relative flex max-h-[88dvh] w-full max-w-lg flex-col border border-zinc-300 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
       <div class="flex items-start justify-between gap-3 border-b border-zinc-200 p-4 dark:border-zinc-900">
         <div class="min-w-0">
-          <div class="mb-1.5 flex flex-wrap items-center gap-1.5">
-            <span class="border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-700 dark:text-cyan-400">
-              {shared.isEncrypted ? 'Playlist compartida · Enlace cifrado' : 'Playlist compartida'}
-            </span>
-            {#if shared.isZeroServer}
-              <span class="border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
-                Sin servidor
-              </span>
-            {/if}
-          </div>
-
           <h3 id="shared-playlist-title" class="truncate text-base font-semibold text-zinc-900 dark:text-white">
             {shared.title}
           </h3>
@@ -80,7 +69,7 @@
             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
               <path d="M8 5v14l11-7-11-7z" />
             </svg>
-            <span>Reproducir sin descargar</span>
+            <span>Reproducir</span>
           </button>
 
           <button
@@ -95,10 +84,6 @@
             <span>{shared.downloading ? 'Descargando...' : 'Descargar Playlist'}</span>
           </button>
         </div>
-
-        <p class="mt-2 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-          Toca cualquier canción para reproducirla al instante sin guardar archivos en tu dispositivo, o usa <strong>Descargar Playlist</strong> para tenerla offline.
-        </p>
       </div>
 
       <div class="flex-1 space-y-1.5 overflow-y-auto p-3.5">

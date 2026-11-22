@@ -720,7 +720,7 @@
                       {copiedExportLink ? 'Copiado' : 'Copiar'}
                     </button>
                     <a
-                      href={`https://wa.me/?text=${encodeURIComponent(`🎧 Escucha o descarga esta playlist en GradMix:\n${lastExportedLink}`)}`}
+                      href={`https://wa.me/?text=${encodeURIComponent(`GradMix - Escucha o descarga esta playlist:\n\n${lastExportedLink}`)}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       class="inline-flex items-center gap-1 border border-emerald-600/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400"
@@ -925,8 +925,8 @@
                         aria-label="Eliminar archivo"
                         class="p-1.5 text-zinc-400 hover:text-red-500"
                       >
-                        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <path d="M3 6h18M8 6V4h8v2m-1 0v14H9V6h6z" stroke-linecap="round" stroke-linejoin="round" />
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                          <path d="M9 3h6l1 2h4v2H4V5h4l1-2zm-3 6h12l-1 11a2 2 0 0 1-2 1.8H9a2 2 0 0 1-2-1.8L6 9zm4 2v7h1.5v-7H10zm2.5 0v7H14v-7h-1.5z" />
                         </svg>
                       </button>
                     </div>

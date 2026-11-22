@@ -1,80 +1,116 @@
-# GradMix — PWA de Mezcla Continua Auto-DJ, Catálogo en Streaming y Salas Colaborativas
+<div align="center">
 
-**GradMix** es una Progressive Web App (PWA) de **código abierto** diseñada para operar como reproductor continuo de fiestas con transición **Auto-DJ (Equal-Power Crossfade)** en doble deck (`A` / `B`), biblioteca local persistente en **OPFS / carpeta del dispositivo**, buscador aislado en memoria RAM conectado a catálogo remoto, compartición cifrada **E2EE** por WhatsApp, exportación/importación `.zip` / `.gradmix` y salas colaborativas temporales en tiempo real.
+# GradMix
 
-Está pensada para **uso personal y grupos pequeños** — una fiesta, una reunión, una sala con amigos — sin cuentas, sin registro ni base de datos centralizada de usuarios.
+**PWA Open Source de Auto-DJ Offline, Catálogo en Streaming, Enlaces Cifrados E2EE y Salas Colaborativas**
+
+[![Código Abierto](https://img.shields.io/badge/Open%20Source-GitHub-181717?style=flat-square&logo=github)](https://github.com/aruiz3122004/DjARC)
+[![PWA Live](https://img.shields.io/badge/App%20en%20Vivo-gradmix.arc03.online-0ea5e9?style=flat-square)](https://gradmix.arc03.online)
+[![Svelte 5](https://img.shields.io/badge/Frontend-Svelte%205%20%2B%20Vite%208-ff3e00?style=flat-square)](gradmix-pwa/package.json)
+[![Cloudflare Workers](https://img.shields.io/badge/Backend-Workers%20%2B%20DO%20%2B%20R2-f38020?style=flat-square)](gradmix-api/wrangler.jsonc)
+[![Wiki](https://img.shields.io/badge/Wiki-Docs--as--Code-10b981?style=flat-square)](docs/WIKI.md)
+
+[Demo en Vivo](https://gradmix.arc03.online) · [Inicio Rápido](#inicio-rápido-en-local) · [Barra de Búsqueda](#barra-de-búsqueda-rápida-en-github) · [Wiki del Repositorio](#wiki-del-repositorio) · [Glosario](#glosario-técnico)
+
+</div>
+
+> **GradMix** mezcla música continua sin silencios con doble deck (`A`/`B`), crossfade **Equal-Power**, biblioteca offline en **OPFS** o carpeta real (`devfs::`), compartición cifrada **E2EE** por WhatsApp y salas temporales en tiempo real — sin cuentas, sin login y pensada para fiestas y grupos pequeños.
 
 ---
 
-## Documentación Detallada (`-OV` Overview Files)
+## Barra de Búsqueda Rápida en GitHub
 
-Para mantener este `README` ágil y claro, la arquitectura y los detalles de cada subsistema se desglosan en los siguientes documentos dentro de `docs/`:
+> GitHub elimina formularios `<input>` y scripts en `README.md` por seguridad. Para encontrar cualquier archivo, endpoint o símbolo **sin hacer scroll**:
 
-| Documento | Qué cubre |
+- **Atajos de teclado en GitHub:** pulsa **`/`** para abrir la barra de búsqueda del repositorio, **`t`** para saltar directo a cualquier archivo por nombre, o **`Ctrl + F`** (`⌘ + F`) tras abrir el acordeón de interés.
+- **Búsquedas directas prefiltradas en este repositorio:**
+
+| Qué quieres encontrar | Búsqueda directa en GitHub | Archivo o Doc clave |
+| :--- | :--- | :--- |
+| **Motor de Audio, Crossfade y Colas** | [Buscar en `lib/audio` y `queue.ts`](https://github.com/aruiz3122004/DjARC/search?q=path%3Agradmix-pwa%2Fsrc%2Flib%2Faudio+OR+path%3Aqueue.ts) | [`audioEngine.ts`](gradmix-pwa/src/lib/audio/audioEngine.ts) · [`MODULOS-UI-OV.md`](docs/MODULOS-UI-OV.md) |
+| **Salas en Vivo, WebSocket y Heartbeat** | [Buscar en `gradmix-api` y `RoomView`](https://github.com/aruiz3122004/DjARC/search?q=path%3Agradmix-api+OR+path%3ARoomView.svelte) | [`room.ts`](gradmix-api/src/room.ts) · [`SALAS-Y-COMPARTICION-OV.md`](docs/SALAS-Y-COMPARTICION-OV.md) |
+| **Cifrado WhatsApp E2EE (`?import=#k=` / `?share=`)** | [Buscar `shareCrypto` y `SharedPlaylistModal`](https://github.com/aruiz3122004/DjARC/search?q=shareCrypto+OR+SharedPlaylistModal) | [`shareCrypto.ts`](gradmix-pwa/src/lib/utils/shareCrypto.ts) · [`SALAS-Y-COMPARTICION-OV.md`](docs/SALAS-Y-COMPARTICION-OV.md) |
+| **Almacenamiento OPFS, `devfs::` e IndexedDB** | [Buscar `opfsStorage` y `devfs`](https://github.com/aruiz3122004/DjARC/search?q=opfsStorage+OR+devfs) | [`opfsStorage.ts`](gradmix-pwa/src/lib/storage/opfsStorage.ts) · [`ALMACENAMIENTO-Y-SEGURIDAD-OV.md`](docs/ALMACENAMIENTO-Y-SEGURIDAD-OV.md) |
+| **Catálogo SoundCloud / Audius y Remux `fMP4`** | [Buscar `catalog` y `remux`](https://github.com/aruiz3122004/DjARC/search?q=path%3Aserver%2Fcatalog.ts+OR+remuxFragmentedMp4ToStandardM4a) | [`server/catalog.ts`](gradmix-pwa/server/catalog.ts) · [`audioContainer.ts`](gradmix-pwa/src/lib/audio/audioContainer.ts) |
+
+---
+
+## Wiki del Repositorio
+
+Este proyecto sigue el enfoque **Docs-as-Code**: toda la Wiki vive versionada en Git dentro de [`docs/`](docs/) para mantenerse 100% sincronizada con el código, con posibilidad de espejarse en la pestaña [**GitHub Wiki**](https://github.com/aruiz3122004/DjARC/wiki).
+
+| Página Wiki (`-OV`) | Contenido |
 | :--- | :--- |
-| [**`docs/ARQUITECTURA-OV.md`**](docs/ARQUITECTURA-OV.md) | Topología híbrida (Cliente PWA ↔ Vercel ↔ Cloudflare Workers/DO/R2), paridad dev/prod, flujo de `/api/catalog/*` y despliegue. |
-| [**`docs/MODULOS-UI-OV.md`**](docs/MODULOS-UI-OV.md) | Estado unidireccional en `App.svelte` (Svelte 5 runes), mapa de los 14 componentes UI, `GradMixAudioEngine`, `PlaybackQueue` e integración PWA / `MediaSession`. |
-| [**`docs/SALAS-Y-COMPARTICION-OV.md`**](docs/SALAS-Y-COMPARTICION-OV.md) | Ciclo completo de Salas en Vivo (`RoomDurableObject`, latidos anti-hibernación, `now-audio`, permisos) y compartición E2EE (`?share=` y `?import=#k=`). |
-| [**`docs/ALMACENAMIENTO-Y-SEGURIDAD-OV.md`**](docs/ALMACENAMIENTO-Y-SEGURIDAD-OV.md) | Persistencia en 3 capas (`IndexedDB`, `OPFS`, `File System Access API devfs::`), remux `fMP4 -> .m4a`, `.zip`/`.gradmix` y modelo completo de seguridad. |
-| [**`docs/DEPLOY_GRADMIX.md`**](docs/DEPLOY_GRADMIX.md) | Runbook paso a paso para producción: Vercel (`gradmix.arc03.online`), Cloudflare Worker (`api.gradmix.arc03.online`), DNS, R2 y verificación. |
+| [**Wiki Home (`docs/WIKI.md`)**](docs/WIKI.md) | Índice maestro de la documentación técnica y guía de sincronización Wiki |
+| [**Arquitectura General (`docs/ARQUITECTURA-OV.md`)**](docs/ARQUITECTURA-OV.md) | Topología PWA ↔ Vercel ↔ Cloudflare Workers/DO/R2, paridad dev/prod y flujo de catálogo |
+| [**Módulos UI y Motor (`docs/MODULOS-UI-OV.md`)**](docs/MODULOS-UI-OV.md) | Estado en `App.svelte`, 14 componentes Svelte 5, `GradMixAudioEngine`, `PlaybackQueue` y PWA |
+| [**Salas y Compartición (`docs/SALAS-Y-COMPARTICION-OV.md`)**](docs/SALAS-Y-COMPARTICION-OV.md) | `RoomDurableObject`, latidos anti-hibernación, `now-audio` y WhatsApp E2EE (`?share=` / `#k=`) |
+| [**Almacenamiento y Seguridad (`docs/ALMACENAMIENTO-Y-SEGURIDAD-OV.md`)**](docs/ALMACENAMIENTO-Y-SEGURIDAD-OV.md) | 3 capas (`IndexedDB`, `OPFS`, `devfs::`), remux `.m4a`, `.zip`/`.gradmix` y modelo de amenazas |
+| [**Guía de Despliegue (`docs/DEPLOY_GRADMIX.md`)**](docs/DEPLOY_GRADMIX.md) | Runbook de Vercel (`gradmix.arc03.online`), Cloudflare Worker (`api.gradmix.arc03.online`) y R2 |
+
+<details>
+<summary><strong>Cómo reflejar esta documentación en la pestaña Wiki de GitHub (opcional)</strong></summary>
+
+1. En GitHub, abre **Settings → Features** y habilita **Wikis** en el repositorio `aruiz3122004/DjARC`.
+2. Clona el repositorio Wiki aparte (`git clone https://github.com/aruiz3122004/DjARC.wiki.git`).
+3. Copia [`docs/WIKI.md`](docs/WIKI.md) como `Home.md` junto a `docs/*-OV.md` y `docs/DEPLOY_GRADMIX.md`, y haz `git push`.
+
+</details>
 
 ---
 
-## Tabla de Contenidos
+## Inicio Rápido en Local
 
-1. [Stack Tecnológico](#stack-tecnológico)
-2. [Alcance del Proyecto y Límites](#alcance-del-proyecto-y-límites)
-3. [Mapa de Arquitectura](#mapa-de-arquitectura)
-4. [Módulos de la Aplicación](#módulos-de-la-aplicación)
-5. [Estructura de Carpetas](#estructura-de-carpetas)
-6. [Dónde Tocar Cada Cosa (Guía de Mantenimiento)](#dónde-tocar-cada-cosa-guía-de-mantenimiento)
-7. [Endpoints HTTP, SSE y WebSocket (`gradmix-api` y `/api/catalog`)](#endpoints-http-sse-y-websocket-gradmix-api-y-apicatalog)
-8. [Cómo Correr, Compilar, Probar y Desplegar](#cómo-correr-compilar-probar-y-desplegar)
-9. [Decisiones Técnicas y su Porqué](#decisiones-técnicas-y-su-porqué)
-10. [Seguridad y Privacidad](#seguridad-y-privacidad)
-11. [Preguntas y Respuestas](#preguntas-y-respuestas)
-12. [Glosario Técnico](#glosario-técnico)
+**Requisito:** Node.js 20+. Instala dependencias en `gradmix-pwa/` (obligatorio) y `gradmix-api/` (necesario solo para Salas y Links E2EE locales):
+
+```powershell
+# Terminal 1 — Worker local de Salas y Bundles (http://127.0.0.1:8787)
+cd gradmix-api; npm install; npm run dev
+
+# Terminal 2 — Frontend PWA con HMR + catálogo (http://localhost:5173)
+cd gradmix-pwa; npm install; npm run dev
+```
+
+> Puedes levantar el Worker sin cambiar de carpeta ejecutando `npm run dev:api` dentro de `gradmix-pwa/`. Deja `VITE_API_BASE` vacío en local ([`.env.example`](gradmix-pwa/.env.example)) para usar el proxy de Vite.
 
 ---
 
-## Stack Tecnológico
+## Documentación Compacta (Acordeones)
+
+> Haz clic en cualquier bloque para desplegar la información técnica sin llenar tu pantalla.
+
+<details>
+<summary><strong>1. Stack Tecnológico y Límites Reales del Sistema</strong> — Svelte 5, Web Audio, OPFS/devfs::, Workers/DO/R2</summary>
+
+### Stack Tecnológico
 
 | Capa | Tecnología / Paquete | Uso en GradMix |
 | :--- | :--- | :--- |
-| **UI / Estado Reactivo** | **Svelte 5** (`^5.57.3`, runas `$state`, `$derived`, `$effect`) + **TypeScript** (`~6.0.3`) | Componentes presentacionales desacoplados, estado único en `App.svelte` y validación estática con `svelte-check`. |
-| **Estilos** | **Tailwind CSS v4** (`^4.3.5`, `@tailwindcss/vite`) | Interfaz rectangular minimalista (`border-radius: 0`), tema **oscuro OLED** y **tema claro**. |
-| **Empaquetador & PWA** | **Vite 8** (`^8.3.6`) + **vite-plugin-pwa** (`^2.0.0`, Workbox) | Compilación, caché offline instalable (`sw.js`, `manifest.json`) y notificaciones locales vía `sw-media-controls.js`. |
-| **Motor de Audio** | **Web Audio API** + `<audio>` (`MediaElementAudioSourceNode`) + `AudioContext` | Doble deck (`A`/`B`), crossfade Equal-Power (`cos`/`sin`), compresor maestro y streaming de baja latencia. |
-| **Almacenamiento Local** | **OPFS** + **IndexedDB** (`idb-keyval ^6.3.0`) + **File System Access API** (`devfs::`) | Audio en OPFS (respaldo IDB) o carpeta real elegida por el usuario (`showDirectoryPicker`), metadatos en IndexedDB. |
-| **Criptografía E2EE** | **WebCrypto API** (`AES-256-GCM`, `PBKDF2-SHA256`) | Cifrado extremo a extremo en links de playlists (`?import=#k=`, `?share=`) y hashing de claves de sala. |
-| **Análisis de BPM** | **Web Workers** (`bpmWorker.ts` / `bpmAnalyzer.ts`) + **web-audio-beat-detector** | Cola secuencial en segundo plano para detectar BPM y duración sin congelar la UI. |
-| **Catálogo Remoto** | Vercel Serverless ([`server/catalog.ts`](gradmix-pwa/server/catalog.ts)) + plugin Vite ([`vite-catalog-plugin.ts`](gradmix-pwa/vite-catalog-plugin.ts)) | Proxy/caché en mismo origen hacia SoundCloud v2 / Audius Discovery (`/api/catalog/*`) con remux `fMP4 -> .m4a`. |
-| **Backend Salas y Links** | **Cloudflare Workers** ([`gradmix-api`](gradmix-api)): **Durable Objects** + **R2** | Salas temporales (`RoomDurableObject`, HTTP/SSE/WS + audio en vivo) y paquetes cifrados 24 h (`BundleDurableObject`). |
-| **Contenedor Nativo** | **Capacitor** (`^8.6.2`) | Configuración base (`com.gradmix.app`, `webDir: dist`) en [`capacitor.config.ts`](gradmix-pwa/capacitor.config.ts). |
-| **Pruebas** | **Node Test Runner** (`node --test tests/*.test.ts`) + `smoke.mjs` | Suite unitaria (cola, búsqueda, idempotencia, contenedores MP4/ADTS, tags ID3/MP4, `.zip`) + E2E del Worker. |
+| **UI / Estado** | **Svelte 5** (`^5.57.3`, runas) + **TypeScript** (`~6.0.3`) | Componentes desacoplados, estado único en `App.svelte` y `svelte-check`. |
+| **Estilos** | **Tailwind CSS v4** (`^4.3.5`) | Diseño rectangular minimalista (`border-radius: 0`), tema oscuro OLED y claro. |
+| **Empaquetador & PWA** | **Vite 8** (`^8.3.6`) + **vite-plugin-pwa** (`^2.0.0`) | Bundle, Service Worker offline (`sw.js`, `manifest.json`) y notificaciones locales. |
+| **Motor de Audio** | **Web Audio API** + `<audio>` (`MediaElementAudioSourceNode`) | Doble deck (`A`/`B`), mezcla Equal-Power (`cos`/`sin`) y streaming rápido. |
+| **Almacenamiento** | **OPFS** + **IndexedDB** (`idb-keyval ^6.3.0`) + **File System Access** (`devfs::`) | Binarios en OPFS o carpeta local elegida; metadatos/playlists en IndexedDB. |
+| **Criptografía** | **WebCrypto API** (`AES-256-GCM`, `PBKDF2-SHA256`) | Cifrado E2EE de links (`#k=`) y hashing de contraseñas de sala (`12_000` iters). |
+| **BPM** | **Web Workers** + **web-audio-beat-detector** | Cola secuencial en segundo plano para calcular BPM sin bloquear la UI. |
+| **Catálogo** | Vercel Serverless ([`server/catalog.ts`](gradmix-pwa/server/catalog.ts)) + plugin Vite | Proxy en mismo origen hacia SoundCloud v2 / Audius Discovery + remux `fMP4 -> .m4a`. |
+| **Salas y Bundles** | **Cloudflare Workers** ([`gradmix-api`](gradmix-api)): Durable Objects + R2 | Salas real-time (`RoomDurableObject`) y paquetes temporales (`BundleDurableObject`). |
+| **Nativo y Pruebas** | **Capacitor** (`^8.6.2`) + `node --test` + `smoke.mjs` | Config nativa opcional (`com.gradmix.app`), pruebas unitarias y E2E del Worker. |
 
----
+### Límites operativos
 
-## Alcance del Proyecto y Límites
-
-GradMix resuelve un objetivo concreto: **poner música continua en un evento con tu biblioteca y dejar que tus invitados participen al instante sin crear cuentas ni instalar apps nativas obligatorias**.
-
-### Límites reales
-
-| Límite | Valor | Dónde se define |
+| Límite | Valor | Definición en código |
 | :--- | :--- | :--- |
-| Duración de una sala | `0.25 h` a `10 h`; después expira y elimina su audio | `MAX_ROOM_HOURS` en [`shared.ts`](gradmix-api/src/shared.ts) |
-| Inactividad de invitado en sala | `10 s` sin latido (`heartbeat`) -> expulsión automática (`403`) | `GUEST_INACTIVITY_MS` en [`shared.ts`](gradmix-api/src/shared.ts) |
-| Audio por pista subida | `35 MB` (salas y bundles) | `MAX_UPLOAD_BYTES` en [`shared.ts`](gradmix-api/src/shared.ts) |
-| Pistas por enlace de playlist | `300` | [`bundle.ts`](gradmix-api/src/bundle.ts) |
-| Vida de un enlace E2EE de playlist | `24 h` (después se borra el audio de R2) | `BUNDLE_TTL_MS` en [`shared.ts`](gradmix-api/src/shared.ts) |
-| Biblioteca local | Cuota OPFS del navegador (aviso al 90%, bloqueo al 99% con opción a carpeta `devfs::` limitada solo por el disco) | [`opfsStorage.ts`](gradmix-pwa/src/lib/storage/opfsStorage.ts) |
+| Vida máxima de una sala | `0.25 h` a `10 h` (autodestrucción total) | `MAX_ROOM_HOURS` en [`shared.ts`](gradmix-api/src/shared.ts) |
+| Inactividad de invitado en sala | `10 s` sin latido (`heartbeat`) -> expulsión (`403`) | `GUEST_INACTIVITY_MS` en [`shared.ts`](gradmix-api/src/shared.ts) |
+| Tamaño máximo por pista subida | `35 MB` (salas y bundles) | `MAX_UPLOAD_BYTES` en [`shared.ts`](gradmix-api/src/shared.ts) |
+| Pistas por paquete compartido | `300` (TTL `24 h` en R2) | [`bundle.ts`](gradmix-api/src/bundle.ts) · `BUNDLE_TTL_MS` en [`shared.ts`](gradmix-api/src/shared.ts) |
+| Cuota local del navegador | Aviso al `90%` / bloqueo al `99%` (alternativa: carpeta `devfs::`) | [`opfsStorage.ts`](gradmix-pwa/src/lib/storage/opfsStorage.ts) |
 
----
+</details>
 
-## Mapa de Arquitectura
-
-> Detalle completo y diagramas de secuencia en [**`docs/ARQUITECTURA-OV.md`**](docs/ARQUITECTURA-OV.md).
+<details>
+<summary><strong>2. Mapa de Arquitectura y Flujos Críticos</strong> — Diagrama Mermaid Client ↔ Vercel ↔ Cloudflare</summary>
 
 ```mermaid
 flowchart TB
@@ -118,319 +154,159 @@ flowchart TB
     API_CAT --> SC & AU
 ```
 
-### Flujos críticos resumidos
+- **Streaming rápido:** pistas `> 1.5 MB` usan `<audio src="blob:">` en `GradMixAudioEngine` sin esperar `decodeAudioData()` completo; el planificador (`250 ms`) precarga el deck libre y dispara el **Crossfade Equal-Power**.
+- **Remux `fMP4 -> .m4a`:** `remuxFragmentedMp4ToStandardM4a()` reconstruye el contenedor ISO-BMFF estándar sin recodificar AAC.
+- **Links WhatsApp instantáneos:** modo Zero-Server (`?share=`) para catálogo, y modo E2EE (`?import=<id>#k=<clave>`) para archivos locales con generación inmediata y subida paralela en segundo plano.
+- **Salas sincronizadas:** el host reproduce y publica estado/`now-audio`; invitados autorizados suben pistas al **puesto #1** (`enqueueFirst`), reordenan/borran o pausan **para toda la sala**. Latidos persistidos (`seen:<id>`) sobreviven a la hibernación de DO.
 
-1. **Reproducción instantánea (`GradMixAudioEngine`)**: pistas `> 1.5 MB` arrancan con `<audio src="blob:">` conectado al grafo Web Audio sin esperar decodificación total; el planificador (`250 ms`) precarga el deck libre y dispara el **Crossfade Equal-Power** (`cos`/`sin`).
-2. **Normalización `fMP4 -> .m4a` y `.zip`**: `remuxFragmentedMp4ToStandardM4a()` reempaqueta HLS fragmentado en `.m4a` estándar sin recodificar AAC, tanto en `/api/catalog/stream` como al exportar `.zip` (`CompressionStream('deflate-raw')`).
-3. **Compartición E2EE instantánea por WhatsApp**:
-   - Pistas del catálogo usan modo **Zero-Server** (`?share=...`, cifrado en la URL sin servidor).
-   - Pistas locales generan **al instante** el enlace `?import=<id>#k=<claveAES256>` y suben las pistas cifradas en paralelo en segundo plano; quien recibe el link puede escuchar al vuelo (en RAM, estilo Spotify) o descargar la playlist completa.
-4. **Sala colaborativa en tiempo real**: el host transmite estado y `now-audio` hacia el Durable Object; invitados autorizados suben pistas (que entran en **puesto #1** vía `enqueueFirst`), reordenan/eliminan cola o pausan/reanudan **para toda la sala**. Latidos cada 3 s persistidos (`seen:<participantId>`) sobreviven a la hibernación y expulsan invitados ausentes > 10 s.
+</details>
 
----
-
-## Módulos de la Aplicación
-
-> Más detalles de componentes y motor de audio en [**`docs/MODULOS-UI-OV.md`**](docs/MODULOS-UI-OV.md).
+<details>
+<summary><strong>3. Módulos de la Aplicación (7 Vistas)</strong> — Qué hace cada módulo y archivos clave</summary>
 
 | Módulo | Qué hace | Cómo funciona | Archivos clave |
 | :--- | :--- | :--- | :--- |
-| **Reproductor** | Cola continua con mezcla entre canciones sin silencios. | Doble deck (`A`/`B`) Web Audio, planificador 250 ms, Equal-Power crossfade, MediaSession + Blackout AMOLED. | [`audioEngine.ts`](gradmix-pwa/src/lib/audio/audioEngine.ts), [`queue.ts`](gradmix-pwa/src/lib/utils/queue.ts), [`PlayerDeck.svelte`](gradmix-pwa/src/components/PlayerDeck.svelte), [`BottomPlayerBar.svelte`](gradmix-pwa/src/components/BottomPlayerBar.svelte) |
-| **Buscar** | Encuentra pistas locales y del catálogo público. | Índice recursivo en RAM (`IsolatedSearchEngine`, tolerante a acentos y subsecuencias) + proxy `/api/catalog/search`. | [`searchEngine.ts`](gradmix-pwa/src/lib/search/searchEngine.ts), [`SearchResultsView.svelte`](gradmix-pwa/src/components/SearchResultsView.svelte) |
-| **Playlists** | Crear, editar, reordenar, exportar y compartir por WhatsApp. | Metadatos en IndexedDB; audio en OPFS o carpeta local (`devfs::` con icono de carpeta). Exporta `.zip`, `.gradmix`, `.json` y links cifrados (`?share=` / `?import=#k=`). | [`PlaylistManager.svelte`](gradmix-pwa/src/components/PlaylistManager.svelte), [`SharedPlaylistModal.svelte`](gradmix-pwa/src/components/SharedPlaylistModal.svelte), [`shareCrypto.ts`](gradmix-pwa/src/lib/utils/shareCrypto.ts), [`zip.ts`](gradmix-pwa/src/lib/utils/zip.ts), [`bundle.ts`](gradmix-pwa/src/lib/utils/bundle.ts) |
-| **Favoritos** | Marcar pistas clave y lanzarlas en un toque. | Filtra en memoria las pistas con `favorite: true`, muestra icono de almacenamiento local si aplica y arma cola instantánea. | [`FavoritesView.svelte`](gradmix-pwa/src/components/FavoritesView.svelte) |
-| **Monitoreo** | Inspeccionar RAM, cuota OPFS y almacenamiento interno. | Consulta `navigator.storage.estimate()`, gestiona carpeta local `showDirectoryPicker` (`Cambiar carpeta` / `Eliminar acceso`) y botón **Borrar datos**. | [`MonitoringView.svelte`](gradmix-pwa/src/components/MonitoringView.svelte), [`opfsStorage.ts`](gradmix-pwa/src/lib/storage/opfsStorage.ts) |
-| **Sala en Vivo** | Sesión colaborativa Host ↔ Invitados en tiempo real. | Código + clave PBKDF2 o `inviteToken`, permisos granulares (`canSkip`, `canPause`, `canAdd`, `canRemove`), `now-audio`, latidos cada 3 s y sync por WS/SSE. | [`RoomView.svelte`](gradmix-pwa/src/components/RoomView.svelte), [`room.ts`](gradmix-api/src/room.ts), [`index.ts`](gradmix-api/src/index.ts) |
-| **Preguntas (FAQ)** | Guía interactiva integrada sobre uso, PWA, licencias, salas y privacidad. | Tabs por tema y acordeón reutilizable; aclara que GradMix es código abierto, cómo instalar la PWA y qué datos guarda localmente. | [`FaqView.svelte`](gradmix-pwa/src/components/FaqView.svelte), [`AccordionList.svelte`](gradmix-pwa/src/components/AccordionList.svelte) |
+| **Reproductor** | Cola continua sin silencios entre canciones. | Doble deck (`A`/`B`), crossfade `4s`/`8s`/`12s`, `MediaSession` y Blackout AMOLED. | [`audioEngine.ts`](gradmix-pwa/src/lib/audio/audioEngine.ts), [`queue.ts`](gradmix-pwa/src/lib/utils/queue.ts), [`PlayerDeck.svelte`](gradmix-pwa/src/components/PlayerDeck.svelte), [`BottomPlayerBar.svelte`](gradmix-pwa/src/components/BottomPlayerBar.svelte) |
+| **Buscar** | Encuentra pistas locales y en catálogo público. | Índice recursivo en RAM (`IsolatedSearchEngine`) + `/api/catalog/search`. | [`searchEngine.ts`](gradmix-pwa/src/lib/search/searchEngine.ts), [`SearchResultsView.svelte`](gradmix-pwa/src/components/SearchResultsView.svelte) |
+| **Playlists** | CRUD, orden, exportación y envío por WhatsApp. | IDB + OPFS/`devfs::` (ícono de carpeta), `.zip`/`.gradmix`/`.json` y links `?share=` / `?import=#k=`. | [`PlaylistManager.svelte`](gradmix-pwa/src/components/PlaylistManager.svelte), [`SharedPlaylistModal.svelte`](gradmix-pwa/src/components/SharedPlaylistModal.svelte), [`shareCrypto.ts`](gradmix-pwa/src/lib/utils/shareCrypto.ts) |
+| **Favoritos** | Acceso rápido y reproducción en un toque. | Filtra en memoria `favorite: true`, indica almacenamiento local y arma cola al instante. | [`FavoritesView.svelte`](gradmix-pwa/src/components/FavoritesView.svelte) |
+| **Monitoreo** | Telemetría RAM, cuota OPFS y carpeta interna. | `navigator.storage.estimate()`, gestión de `devfs::` (`Cambiar carpeta`, `Eliminar acceso`) y **Borrar datos**. | [`MonitoringView.svelte`](gradmix-pwa/src/components/MonitoringView.svelte), [`opfsStorage.ts`](gradmix-pwa/src/lib/storage/opfsStorage.ts) |
+| **Sala en Vivo** | Fiesta colaborativa Host ↔ Invitados. | Código + clave PBKDF2 / `inviteToken`, permisos (`canSkip`, `canPause`, `canAdd`, `canRemove`), `now-audio` y WS/SSE. | [`RoomView.svelte`](gradmix-pwa/src/components/RoomView.svelte), [`room.ts`](gradmix-api/src/room.ts), [`index.ts`](gradmix-api/src/index.ts) |
+| **Preguntas (FAQ)** | Ayuda interactiva filtrable integrada en la app. | Tabs por tema + [`AccordionList.svelte`](gradmix-pwa/src/components/AccordionList.svelte) (open source, PWA móvil, privacidad, salas). | [`FaqView.svelte`](gradmix-pwa/src/components/FaqView.svelte), [`AccordionList.svelte`](gradmix-pwa/src/components/AccordionList.svelte) |
 
----
+</details>
 
-## Estructura de Carpetas
+<details>
+<summary><strong>4. Estructura de Carpetas y Guía "Dónde Tocar Cada Cosa"</strong></summary>
 
 ```text
 DjARC/
-├── README.md                          # Documentación principal del proyecto
+├── README.md                          # README compacto con acordeones y enlaces Wiki
 ├── package.json                       # Dependencias compartidas en raíz
 ├── capacitor.config.json              # Metadatos Capacitor en raíz
-├── docs/                              # Documentación de arquitectura y despliegue
-│   ├── ARQUITECTURA-OV.md             # Diagramas y flujos End-to-End
-│   ├── MODULOS-UI-OV.md               # Svelte 5, componentes UI y motor dual-deck
-│   ├── SALAS-Y-COMPARTICION-OV.md     # Salas en vivo y compartición cifrada WhatsApp
-│   ├── ALMACENAMIENTO-Y-SEGURIDAD-OV.md # OPFS/devfs::, remux fMP4 y modelo de seguridad
-│   ├── DEPLOY_GRADMIX.md              # Guía de despliegue Vercel + Cloudflare Workers
-│   ├── context.md                     # Visión original del proyecto
-│   └── security.md                    # Notas históricas de sandbox PWA
-├── gradmix-api/                       # Worker de Cloudflare (salas + bundles E2EE)
-│   ├── wrangler.jsonc                 # Bindings DO (`ROOMS`, `BUNDLES`), R2 (`AUDIO_BUCKET`) y `ALLOWED_ORIGINS`
-│   ├── package.json                   # Scripts: dev, deploy (`wrangler@3.114.15`), typecheck
-│   ├── scripts/smoke.mjs              # Suite end-to-end contra dev local o producción
-│   └── src/
-│       ├── index.ts                   # Router HTTP/WS, CORS estricto y alta de salas/bundles
-│       ├── room.ts                    # RoomDurableObject (SSE, WS, heartbeat, now-audio, cola)
-│       ├── bundle.ts                  # BundleDurableObject (paquetes temporales TTL 24h)
-│       └── shared.ts                  # Constantes, PBKDF2-SHA256, timingSafeStringEqual, CORS
-└── gradmix-pwa/                       # Aplicación principal (Vite 8 + Svelte 5 + PWA)
-    ├── .env.example                   # Plantilla de `VITE_API_BASE`
-    ├── vercel.json                    # Configuración de build, headers SW/Manifest y funciones `api/`
-    ├── vite.config.ts                 # Tailwind v4, Svelte, gradmixCatalogPlugin, VitePWA y proxy local
-    ├── vite-catalog-plugin.ts         # Middleware /api/catalog/* para Vite dev/preview
-    ├── capacitor.config.ts            # Configuración Capacitor (`com.gradmix.app` -> `dist/`)
-    ├── package.json                   # Scripts: dev, dev:api, build, preview, check
-    ├── scripts/build-api.mjs          # Empaqueta `server/api/catalog/*.ts` -> `api/catalog/*.js`
-    ├── server/
-    │   ├── catalog.ts                 # Lógica única de catálogo SoundCloud/Audius + caché + remux
-    │   └── api/catalog/               # Puntos de entrada serverless (`trending.ts`, `search.ts`, `stream.ts`)
-    ├── api/catalog/                   # Salida generada por `npm run build` para Vercel (`*.js`)
-    ├── public/
-    │   ├── manifest.json              # Manifiesto PWA instalable (`display: standalone`)
-    │   ├── sw-media-controls.js       # Manejador `notificationclick` en Service Worker
-    │   └── icons/                     # Íconos PWA (192, 512, maskable)
-    ├── tests/                         # Suite unitaria (`node --test tests/*.test.ts`)
-    │   ├── audioContainer.test.ts
-    │   ├── audioTagsAndFormats.test.ts
-    │   ├── idempotency.test.ts
-    │   ├── queue.test.ts
-    │   ├── search.test.ts
-    │   └── zip.test.ts
+├── docs/                              # Wiki Docs-as-Code (-OV.md + DEPLOY_GRADMIX)
+│   ├── WIKI.md                        # Índice maestro de la Wiki
+│   ├── ARQUITECTURA-OV.md             # Arquitectura híbrida y flujos
+│   ├── MODULOS-UI-OV.md               # Svelte 5, 14 componentes y motor Web Audio
+│   ├── SALAS-Y-COMPARTICION-OV.md     # Salas real-time y WhatsApp E2EE
+│   ├── ALMACENAMIENTO-Y-SEGURIDAD-OV.md # OPFS/devfs::, remux .m4a y seguridad
+│   └── DEPLOY_GRADMIX.md              # Guía Vercel + Cloudflare Workers + R2
+├── gradmix-api/                       # Worker Cloudflare (`api.gradmix.arc03.online`)
+│   ├── wrangler.jsonc                 # Bindings DO (`ROOMS`, `BUNDLES`), R2 (`AUDIO_BUCKET`) y CORS
+│   ├── scripts/smoke.mjs              # Batería end-to-end del Worker
+│   └── src/{index,room,bundle,shared}.ts
+└── gradmix-pwa/                       # App PWA (Vite 8 + Svelte 5 + Tailwind v4)
+    ├── .env.example / vercel.json / vite.config.ts / vite-catalog-plugin.ts
+    ├── scripts/build-api.mjs          # Compila server/api/catalog/*.ts -> api/catalog/*.js
+    ├── server/{catalog.ts,api/catalog/*.ts}
+    ├── public/{manifest.json,sw-media-controls.js,icons/}
+    ├── tests/*.test.ts                # 6 suites unitarias (`node --test`)
     └── src/
-        ├── App.svelte                 # Orquestador único de estado, salas, enlaces compartidos y OPFS/devfs
-        ├── app.css                    # Tailwind v4 + temas oscuro OLED / claro
-        ├── main.ts                    # Entrada Svelte
+        ├── App.svelte / app.css / main.ts
         ├── components/                # 14 componentes UI desacoplados
-        │   ├── AccordionList.svelte
-        │   ├── BlackoutOverlay.svelte
-        │   ├── BottomPlayerBar.svelte
-        │   ├── ConfirmModal.svelte
-        │   ├── CrossfadeControl.svelte
-        │   ├── FaqView.svelte
-        │   ├── FavoritesView.svelte
-        │   ├── MonitoringView.svelte
-        │   ├── PlayerDeck.svelte
-        │   ├── PlaylistManager.svelte
-        │   ├── RoomView.svelte
-        │   ├── SearchResultsView.svelte
-        │   ├── SharedPlaylistModal.svelte
-        │   └── SidebarNav.svelte
-        └── lib/
-            ├── types.ts               # Contratos TypeScript del dominio
-            ├── api/
-            │   ├── audius.ts          # Cliente /api/catalog/*
-            │   └── base.ts            # `apiUrl()` y `apiWsUrl()` (dev proxy vs `VITE_API_BASE`)
-            ├── audio/
-            │   ├── audioContainer.ts  # Inspección DRM, extractor ADTS y remuxer fMP4 -> M4A
-            │   ├── audioEngine.ts     # Motor dual-deck Web Audio, streaming, lazyBlobResolver
-            │   ├── mediaSession.ts    # Integración Media Session API + notificación local
-            │   └── wakeLock.ts        # Wrapper Screen Wake Lock API
-            ├── search/
-            │   └── searchEngine.ts    # Buscador aislado recursivo en RAM
-            ├── storage/
-            │   ├── db.ts              # IndexedDB (`gradmix-meta-db`)
-            │   └── opfsStorage.ts     # OPFS + fallback IDB + carpeta `devfs::` (`showDirectoryPicker`)
-            ├── utils/
-            │   ├── audioTags.ts       # Parser ID3v2 y átomos MP4
-            │   ├── bundle.ts          # Exportación `.zip` y paquetes binarios `.gradmix`
-            │   ├── format.ts          # Formateo, limpieza de nombres y MIME
-            │   ├── idempotency.ts     # `IdempotentController` anti doble clic
-            │   ├── queue.ts           # `PlaybackQueue` (`enqueueNext`, `enqueueFirst`, historial)
-            │   ├── shareCrypto.ts     # Cifrado AES-256-GCM y enlaces `?share=` / `?import=#k=`
-            │   ├── whatsapp.ts        # Constructor de mensaje limpio y URL `wa.me`
-            │   └── zip.ts             # Constructor/lector ZIP estándar (`deflate-raw`)
-            └── workers/
-                ├── bpmAnalyzer.ts     # Gestor de cola secuencial de BPM
-                └── bpmWorker.ts       # Web Worker de cálculo de BPM
+        └── lib/                       # api/, audio/, search/, storage/, utils/, workers/, types.ts
 ```
 
----
-
-## Dónde Tocar Cada Cosa (Guía de Mantenimiento)
-
-| Si necesitas modificar... | Archivo(s) principal(es) | Símbolos / Secciones clave |
+| Si quieres modificar... | Archivo(s) | Símbolos clave |
 | :--- | :--- | :--- |
-| **Estado global, rutas (`AppModule`), carga inicial o flujos principales** | [`App.svelte`](gradmix-pwa/src/App.svelte) | `playLibraryTrack`, `handleSelectAudiusTrack`, `handleExportBundleLink`, `handleImportFromLink`, `handleSwitchToDeviceStorage`, `$effect` con `untrack()`. |
-| **Motor dual-deck, crossfade o reproducción bajo demanda** | [`audioEngine.ts`](gradmix-pwa/src/lib/audio/audioEngine.ts) | `GradMixAudioEngine`, `prepareDeckMedia`, `executeCrossfade`, `setLazyBlobResolver`, `runSchedulerTick`. |
-| **Cola de reproducción, turnos prioritarios o sala** | [`queue.ts`](gradmix-pwa/src/lib/utils/queue.ts) | `PlaybackQueue` (`enqueueNext`, `enqueueFirst`, `setUpNextOrder`, `removeFromUpNext`, `advanceNext`). |
-| **Compartir por WhatsApp, cifrado o modal estilo Spotify** | [`shareCrypto.ts`](gradmix-pwa/src/lib/utils/shareCrypto.ts), [`whatsapp.ts`](gradmix-pwa/src/lib/utils/whatsapp.ts), [`SharedPlaylistModal.svelte`](gradmix-pwa/src/components/SharedPlaylistModal.svelte) | `encryptShareBytes`, `decryptShareBytes`, `encodeZeroServerPlaylistLink`, `buildWhatsAppShareUrl`. |
-| **Almacenamiento OPFS, respaldo IDB o carpeta `devfs::`** | [`opfsStorage.ts`](gradmix-pwa/src/lib/storage/opfsStorage.ts), [`db.ts`](gradmix-pwa/src/lib/storage/db.ts), [`MonitoringView.svelte`](gradmix-pwa/src/components/MonitoringView.svelte) | `pickDeviceStorageDirectory`, `getDeviceStorageInfo`, `clearDeviceDirectorySelection`, `saveAudioFile`, `readAudioBlob`. |
-| **Salas colaborativas y bundles temporales en Worker** | [`gradmix-api/src/index.ts`](gradmix-api/src/index.ts), [`room.ts`](gradmix-api/src/room.ts), [`bundle.ts`](gradmix-api/src/bundle.ts), [`shared.ts`](gradmix-api/src/shared.ts) | `RoomDurableObject`, `BundleDurableObject`, `handleHeartbeat`, `handleNowAudioUpload`, `handleNowAudioGet`, `timingSafeStringEqual`. |
-| **Catálogo remoto SoundCloud/Audius y remux en servidor** | [`server/catalog.ts`](gradmix-pwa/server/catalog.ts), [`audioContainer.ts`](gradmix-pwa/src/lib/audio/audioContainer.ts) | `createCatalogHandler`, `inspectAudioContainer`, `remuxFragmentedMp4ToStandardM4a`. |
-| **Preguntas frecuentes y acordeones** | [`FaqView.svelte`](gradmix-pwa/src/components/FaqView.svelte), [`AccordionList.svelte`](gradmix-pwa/src/components/AccordionList.svelte) | `TOPIC_TABS`, `FAQ_ITEMS`. |
+| **Estado global, rutas o flujos** | [`App.svelte`](gradmix-pwa/src/App.svelte) | `playLibraryTrack`, `handleExportBundleLink`, `handleImportFromLink`, `handleSwitchToDeviceStorage`, `$effect` + `untrack()`. |
+| **Crossfade, Decks o reproducción en RAM** | [`audioEngine.ts`](gradmix-pwa/src/lib/audio/audioEngine.ts) · [`queue.ts`](gradmix-pwa/src/lib/utils/queue.ts) | `GradMixAudioEngine`, `prepareDeckMedia`, `setLazyBlobResolver`, `enqueueFirst`, `enqueueNext`. |
+| **Compartición cifrada WhatsApp** | [`shareCrypto.ts`](gradmix-pwa/src/lib/utils/shareCrypto.ts) · [`SharedPlaylistModal.svelte`](gradmix-pwa/src/components/SharedPlaylistModal.svelte) | `encryptShareBytes`, `decryptShareBytes`, `encodeZeroServerPlaylistLink`, `buildWhatsAppShareUrl`. |
+| **OPFS / carpeta `devfs::` / IDB** | [`opfsStorage.ts`](gradmix-pwa/src/lib/storage/opfsStorage.ts) · [`db.ts`](gradmix-pwa/src/lib/storage/db.ts) | `pickDeviceStorageDirectory`, `getDeviceStorageInfo`, `clearDeviceDirectorySelection`, `saveAudioFile`. |
+| **Worker de Salas y Bundles** | [`index.ts`](gradmix-api/src/index.ts) · [`room.ts`](gradmix-api/src/room.ts) · [`bundle.ts`](gradmix-api/src/bundle.ts) | `RoomDurableObject`, `BundleDurableObject`, `handleHeartbeat`, `handleNowAudioUpload`, `timingSafeStringEqual`. |
 
----
+</details>
 
-## Endpoints HTTP, SSE y WebSocket (`gradmix-api` y `/api/catalog`)
+<details>
+<summary><strong>5. Endpoints HTTP, SSE y WebSocket</strong> — <code>/api/catalog</code>, <code>/api/bundles</code> y <code>/api/rooms</code></summary>
 
-| Grupo | Origen en Producción | Origen en Desarrollo |
-| :--- | :--- | :--- |
-| `/api/catalog/*` | Funciones serverless de Vercel (`gradmix-pwa/api/catalog/*.js`) | [`vite-catalog-plugin.ts`](gradmix-pwa/vite-catalog-plugin.ts) |
-| `/api/rooms/*`, `/api/bundles/*`, `/api/health` | Cloudflare Worker `https://api.gradmix.arc03.online` | Worker local (`npm run dev:api` en `127.0.0.1:8787`), proxeado por Vite |
+- **Salud:** `GET /api/health` -> `{ ok: true, service: 'gradmix-api' }`.
+- **Catálogo (Vercel mismo origen / plugin Vite):**
+  - `GET /api/catalog/trending?limit=16`
+  - `GET /api/catalog/search?q=<texto>&limit=24`
+  - `GET /api/catalog/stream?trackId=<id>&host=<opcional>` (filtra DRM y remuxa `fMP4 -> .m4a`)
+- **Bundles temporales E2EE (`gradmix-api`, TTL 24 h):**
+  - `POST /api/bundles` · `POST /api/bundles/:id/tracks/:index` · `GET /api/bundles/:id` · `GET /api/bundles/:id/tracks/:index`
+- **Salas colaborativas (`gradmix-api`, 0.25 h – 10 h):**
+  - `POST /api/rooms` · `GET /api/rooms/:code?participantId=...` · `DELETE /api/rooms/:code`
+  - `POST /api/rooms/:code/join` · `POST /api/rooms/:code/heartbeat` · `POST /api/rooms/:code/leave`
+  - `DELETE /api/rooms/:code/participants/:targetId` · `POST /api/rooms/:code/permissions`
+  - `POST /api/rooms/:code/tracks` · `GET /api/rooms/:code/tracks/:id/audio` · `DELETE /api/rooms/:code/tracks/:id`
+  - `POST /api/rooms/:code/now-audio` · `GET /api/rooms/:code/now-audio` (soporta `Range` y valida `nowAudioTrackKey`)
+  - `POST /api/rooms/:code/command` · `POST /api/rooms/:code/state`
+  - `GET /api/rooms/:code/events` (**SSE**) · `WS /api/rooms/:code/ws` (**WebSocket**)
 
-### Salud del Worker
-- `GET /api/health`: responde `{ ok: true, service: 'gradmix-api' }`.
+</details>
 
-### Catálogo Remoto (`/api/catalog/*`)
-- `GET /api/catalog/trending?limit=16`: pistas populares (SoundCloud v2 + respaldo Audius) con caché temporal en RAM.
-- `GET /api/catalog/search?q=<texto>&limit=24`: búsqueda unificada por título/artista.
-- `GET /api/catalog/stream?trackId=<id>&host=<opcional>`: descarga/ensambla el stream, filtra DRM, remuxa `fMP4 -> .m4a` si aplica y devuelve el audio listo.
-
-### Enlaces Temporales E2EE de Playlists (`/api/bundles/*`)
-- `POST /api/bundles`: crea el manifiesto del paquete en `BundleDurableObject` (TTL `24 h`, máx. 300 pistas) y devuelve su `id`.
-- `POST /api/bundles/:id/tracks/:index`: sube el blob cifrado con AES-256-GCM a R2 (máx. `35 MB`).
-- `GET /api/bundles/:id` y `GET /api/bundles/:id/tracks/:index`: descarga manifiesto y pistas cifradas.
-
-### Salas Colaborativas Temporales (`/api/rooms/*`)
-- `POST /api/rooms`: crea sala (`0.25 h` a `10 h`, código único o personalizado).
-- `GET /api/rooms/:code?participantId=...`: consulta estado público de la sala.
-- `DELETE /api/rooms/:code`: cierra la sala (solo host) y borra todo su audio en R2.
-- `POST /api/rooms/:code/join`: une a un participante por clave PBKDF2 o `inviteToken` (reutilizando `deviceId` si reconecta).
-- `POST /api/rooms/:code/heartbeat`: mantiene vivo al participante (`seen:<participantId>`, expulsión tras `10 s` de inactividad).
-- `POST /api/rooms/:code/leave`: salida voluntaria limpia del participante.
-- `DELETE /api/rooms/:code/participants/:targetId`: expulsión directa realizada por el host.
-- `POST /api/rooms/:code/permissions`: actualiza permisos granulares (`canSkip`, `canPause`, `canAdd`, `canRemove`).
-- `POST /api/rooms/:code/tracks`, `GET /api/rooms/:code/tracks/:id/audio`, `DELETE /api/rooms/:code/tracks/:id`: subida a R2 (máx. 35 MB), descarga única del host (`hasAudioRelay: false`) o borrado.
-- `POST /api/rooms/:code/now-audio` y `GET /api/rooms/:code/now-audio`: transmisión del audio actual hacia invitados (con soporte `Range` y verificación de `nowAudioTrackKey`).
-- `POST /api/rooms/:code/command` y `POST /api/rooms/:code/state`: ejecución de comandos (`toggle-play` global, `skip-next`, `previous`, `move-queue-track`, `remove-queue-track`) y sincronización del estado maestro.
-- `GET /api/rooms/:code/events` (**SSE**) y `WS /api/rooms/:code/ws` (**WebSocket**): canal en tiempo real de participantes, cola, estado y expulsiones (`room-kicked`).
-
----
-
-## Cómo Correr, Compilar, Probar y Desplegar
-
-### Prerrequisitos
-- **Node.js 20+** (incluye `npm` y `node --test`).
-- Para probar **Salas** o **Links E2EE de archivos locales** en local necesitas arrancar el Worker local (`gradmix-api`) en una terminal paralela. Si solo vas a usar el Reproductor local, Playlists offline o el Catálogo remoto, basta con `gradmix-pwa`.
-
-### 1. Instalar dependencias
+<details>
+<summary><strong>6. Compilación PWA, Pruebas, Capacitor y Despliegue a Producción</strong></summary>
 
 ```powershell
-# Frontend PWA + plugin de catálogo
-cd gradmix-pwa
-npm install
-
-# Worker de salas y bundles (opcional si usarás salas o links locales en dev)
-cd ../gradmix-api
-npm install
-```
-
-*(Opcional)* Revisa [`gradmix-pwa/.env.example`](gradmix-pwa/.env.example): **en desarrollo deja `VITE_API_BASE` vacío** (no crees un `.env` apuntando a producción salvo que quieras conectar tu Vite local al Worker en la nube).
-
-### 2. Correr en Desarrollo (2 terminales)
-
-**Terminal 1 — Worker local de Salas y Bundles (`http://127.0.0.1:8787`):**
-```powershell
-cd gradmix-pwa
-npm run dev:api
-```
-*(Equivale a ejecutar `cd gradmix-api && npm run dev`.)*
-
-**Terminal 2 — App Frontend con recarga en caliente (`http://localhost:5173`):**
-```powershell
-cd gradmix-pwa
-npm run dev
-```
-- Vite sirve la UI en `http://localhost:5173` (y en tu IP local gracias a `host: true`), atiende `/api/catalog/*` mediante [`vite-catalog-plugin.ts`](gradmix-pwa/vite-catalog-plugin.ts) y proxea `/api/rooms` + `/api/bundles` (HTTP + WebSocket) hacia `127.0.0.1:8787`.
-- En modo `dev`, el Service Worker PWA permanece desactivado (`devOptions.enabled: false`).
-
-### 3. Probar la PWA compilada en local (`build` + `preview`)
-
-```powershell
+# Compilar PWA + Service Worker + funciones api/catalog/*.js y previsualizar en :4173
 cd gradmix-pwa
 npm run build
 npm run preview
-```
-- `npm run build` compila la app en `gradmix-pwa/dist/`, genera `sw.js` y empaqueta las funciones serverless en `gradmix-pwa/api/catalog/*.js`.
-- `npm run preview` levanta la versión compilada en `http://localhost:4173` con Service Worker activo y proxy hacia el Worker local (si está corriendo en `:8787`).
 
-### 4. Chequeo de tipos y pruebas automatizadas
-
-```powershell
-# Verificación de tipos Svelte + TypeScript + suite unitaria en gradmix-pwa
-cd gradmix-pwa
+# Validación estática + suite unitaria (gradmix-pwa)
 npm run check
 node --test tests/*.test.ts
 
-# Verificación de tipos del Worker + pruebas end-to-end (con dev:api levantado)
+# Verificación de tipos y pruebas E2E del Worker (requiere dev:api corriendo)
 cd ../gradmix-api
 npm run typecheck
 node scripts/smoke.mjs
-```
 
-### 5. Sincronización nativa opcional (Capacitor)
-
-```powershell
-cd gradmix-pwa
-npm run build
+# Sincronización nativa opcional con Capacitor
+cd ../gradmix-pwa
 npx cap sync
 ```
 
-### 6. Despliegue a Producción
+- **Producción Frontend:** cada push a `main` despliega automáticamente `gradmix-pwa/` en Vercel (`https://gradmix.arc03.online`) con `VITE_API_BASE=https://api.gradmix.arc03.online`.
+- **Producción Worker:** cuando cambie `gradmix-api/`, ejecuta `cd gradmix-api && npm run deploy` (`wrangler@3.114.15`) y verifica con `node scripts/smoke.mjs https://api.gradmix.arc03.online`. Más detalles en [`docs/DEPLOY_GRADMIX.md`](docs/DEPLOY_GRADMIX.md).
 
-- **Frontend + `/api/catalog/*` (Vercel)**: todo push a la rama `main` despliega automáticamente en Vercel (`Root Directory: gradmix-pwa`, con `VITE_API_BASE=https://api.gradmix.arc03.online`).
-- **Worker `gradmix-api` (Cloudflare Workers)**: se despliega manualmente cuando cambie `gradmix-api/`:
-  ```powershell
-  cd gradmix-api
-  npm run deploy
-  node scripts/smoke.mjs https://api.gradmix.arc03.online
-  ```
-- Consulta [`docs/DEPLOY_GRADMIX.md`](docs/DEPLOY_GRADMIX.md) para ver la configuración completa de DNS, bindings R2/DO y checklist de verificación.
+</details>
 
----
+<details>
+<summary><strong>7. Decisiones Técnicas, Seguridad y Privacidad</strong></summary>
 
-## Decisiones Técnicas y su Porqué
+- **Local-first sin cuentas:** la biblioteca vive en tu dispositivo; sin login ni rastreadores. Almacenamiento aislado por origen (`OPFS` + `IndexedDB`) y acceso opcional a una única carpeta elegida manualmente (`showDirectoryPicker` -> `devfs::`).
+- **Cifrado extremo a extremo en links:** `AES-256-GCM` con IV de 12 bytes por archivo; la clave `#k=...` va en el fragmento URL y **nunca** se envía al servidor.
+- **Seguridad en Salas:** claves derivadas con `PBKDF2-SHA256` (`12_000` iteraciones, sal de 12 bytes) y validadas con `timingSafeStringEqual`; permisos verificados en servidor; latidos `seen:<id>` persistidos en Durable Object con expulsión a los `10 s` (`403`); CORS estricto vía `ALLOWED_ORIGINS`; límite de `35 MB` con `Content-Length` obligatorio y autodestrucción en R2/DO.
+- **Svelte 5 + Streaming + Remux:** sin store global ni Virtual DOM; archivos `> 1.5 MB` usan `<audio src="blob:">` para arranque instantáneo; `remuxFragmentedMp4ToStandardM4a()` corrige streams HLS sin recodificar AAC; respetar `untrack()` al leer `engineSnapshot.currentTrackId` dentro del `$effect` de `engine.syncLibrary()`.
 
-> Versión extendida sobre diseño y compromisos en [`docs/MODULOS-UI-OV.md`](docs/MODULOS-UI-OV.md) y [`docs/ARQUITECTURA-OV.md`](docs/ARQUITECTURA-OV.md).
+</details>
 
-- **Local-first sin cuentas.** Tu biblioteca vive en el dispositivo: arranque instantáneo y soporte 100% offline. Coste aceptado: si borras los datos del navegador pierdes el almacenamiento interno del navegador (mitigado con exportación `.zip` / `.gradmix` y soporte opcional para guardar en carpeta real `devfs::`).
-- **Dos backends complementarios.** El catálogo (`/api/catalog/*`) es HTTP sin estado en el mismo origen (Vercel, cero CORS); las salas y bundles temporales necesitan estado consistente, WebSockets, R2 y alarmas TTL (Cloudflare Workers + Durable Objects).
-- **Svelte 5 sin store global.** Cero Virtual DOM y estado único en `App.svelte` reduce consumo de CPU durante mezclas largas. Hay que respetar `untrack()` al leer `engineSnapshot.currentTrackId` dentro del `$effect` de `engine.syncLibrary()`.
-- **Streaming antes que decodificar todo en RAM.** Pistas `> 1.5 MB` arrancan con `<audio src="blob:">` evitando esperas de varios segundos en móvil.
-- **Remux bit a bit en lugar de transcodificar.** `remuxFragmentedMp4ToStandardM4a()` repara duraciones erróneas de streams `fMP4` sin recomprimir el audio AAC.
-- **Links de playlist instantáneos + subida asíncrona.** Crear el manifiesto primero y cifrar/subir pistas en paralelo en segundo plano evita congelar la interfaz en producción; `#k=` en fragmento URL impide que la clave viaje al servidor.
-- **Presencia persistida en Durable Object.** Guardar `seen:<participantId>` en `ctx.storage` permite que el timeout de 10 s siga siendo exacto incluso si Cloudflare hiberna el objeto entre peticiones.
+<details>
+<summary><strong>8. Preguntas y Respuestas (FAQ)</strong></summary>
 
----
+- **¿GradMix es de código abierto?** Sí. Todo el cliente (`gradmix-pwa`) y el Worker (`gradmix-api`) son auditables y modificables en este repositorio, sin cuentas ni telemetría.
+- **¿Cómo instalo GradMix como app real en el celular?** En **Android Chrome**, pulsa **Instalar App** en la barra lateral o `⋮ -> Instalar aplicación` (evita la flecha ↓ *Descargar página*, que solo guarda una copia estática). En **iOS Safari**, abre `gradmix.arc03.online` -> Compartir -> **Añadir a pantalla de inicio**.
+- **¿Qué información recopila la app?** Ninguna telemetría. Tu música queda en OPFS / carpeta local; salas y links temporales caducan automáticamente (máx. 10 h / 24 h).
+- **¿Al pausar un invitado con permiso en Sala, se pausa para todos?** Sí. El comando `toggle-play` actualiza al host maestro y pausa/reanuda toda la sala.
+- **¿Funciona sin internet?** Sí para reproducir tu biblioteca guardada localmente (Service Worker + OPFS/`devfs::`). Catálogo remoto, salas y descarga inicial de links requieren red.
 
-## Seguridad y Privacidad
-
-> Detalle completo del modelo de amenazas en [**`docs/ALMACENAMIENTO-Y-SEGURIDAD-OV.md`**](docs/ALMACENAMIENTO-Y-SEGURIDAD-OV.md).
-
-- **Aislamiento total en navegador (`OPFS` + `IndexedDB`)**: sandbox estricto por origen, cero acceso libre al disco del usuario (el modo `devfs::` solo accede a la carpeta única autorizada manualmente vía `showDirectoryPicker`), sin micrófono/cámara y sin `innerHTML`/`{@html}`/`eval()`.
-- **Compartición E2EE (`AES-256-GCM`)**: claves de 256 bits e IVs aleatorios de 12 bytes por archivo; la clave viaja únicamente en el fragmento `#k=...` de la URL (el servidor solo ve bloques cifrados con caducidad de 24 h).
-- **Seguridad en Salas (`gradmix-api`)**: claves derivadas con **PBKDF2-SHA256** (`12 000` iteraciones, sal aleatoria de 12 bytes) y comparadas con `timingSafeStringEqual`; tokens de invitación de 96 bits; autorización validada en servidor para cada comando/pista/permiso; expulsión a los 10 s de inactividad (`403`); CORS restringido por `ALLOWED_ORIGINS`; límite `35 MB` por archivo con `Content-Length` obligatorio; autodestrucción garantizada en R2/DO.
-
----
-
-## Preguntas y Respuestas
-
-**¿GradMix es de código abierto?**
-Sí. GradMix es un proyecto de código abierto sin cuentas, sin suscripciones ni rastreadores comerciales; puedes auditar, modificar y desplegar todo el código cliente (`gradmix-pwa`) y el Worker (`gradmix-api`) desde este repositorio.
-
-**¿Cómo instalo GradMix como aplicación real en Android o iPhone?**
-- En **Android (Chrome)**: usa el botón **Instalar App** en la barra lateral o el menú `⋮ -> Instalar aplicación` (evita la flecha ↓ *Descargar página*, porque eso solo guarda una página estática sin funcionalidad).
-- En **iPhone / iPad (Safari)**: abre `gradmix.arc03.online`, pulsa Compartir y selecciona **Añadir a pantalla de inicio**.
-
-**¿Qué información del usuario recopila la aplicación?**
-Ninguna telemetría ni perfiles personales. Tu biblioteca y playlists viven localmente en tu dispositivo; cuando creas una sala temporal o envías una playlist por WhatsApp, solo se almacenan temporalmente los metadatos/archivos necesarios (cifrados en el caso de enlaces de playlist) hasta su autodestrucción.
-
-**¿Dónde se guarda mi música y cómo libero o protejo la cuota del navegador?**
-Por defecto en **OPFS** (con respaldo en IndexedDB). Desde *Monitoreo* puedes vincular una carpeta real de tu dispositivo (**Almacenamiento interno** `devfs::` donde las canciones se guardan con su nombre real), consultar tu cuota, **Eliminar acceso** a la carpeta o pulsar **Borrar datos** para vaciar el almacenamiento de la app.
-
-**¿Si un invitado con permiso pausa en una Sala, se pausa solo para él o para todos?**
-Para **toda la sala**. El comando `toggle-play` actualiza al host maestro y mantiene a todos los participantes sincronizados.
-
-**¿Funciona sin internet?**
-Sí para toda tu biblioteca guardada localmente y la reproducción Auto-DJ (gracias al Service Worker + OPFS / carpeta local). El catálogo remoto, las salas en vivo y la descarga inicial de links compartidos requieren conexión.
+</details>
 
 ---
 
 ## Glosario Técnico
 
-- **OPFS (`Origin Private File System`):** Sistema de archivos privado por origen del navegador diseñado para leer/escribir audio binario sin saturar el Heap JS.
-- **`devfs::` (`File System Access API`):** Modo opcional mediante `showDirectoryPicker()` para almacenar pistas directamente en una carpeta elegida del dispositivo con nombres legibles.
-- **fMP4 -> `.m4a` (Remuxing):** Reempaquetado bit a bit de fragmentos HLS (`moof`/`mdat`) en un contenedor `.m4a` estándar con `moov` y duración correcta sin recodificar AAC.
-- **Equal-Power Crossfade:** Curva de mezcla $\cos(\theta)$ / $\sin(\theta)$ que mantiene constante la energía percibida entre Deck A y Deck B.
-- **E2EE por fragmento `#k=`:** Cifrado en cliente con `AES-256-GCM` donde la clave nunca abandona el navegador en cabeceras HTTP hacia el servidor.
-- **Zero-Server Share (`?share=`):** Enlace para pistas del catálogo cifrado íntegramente en la URL sin subir ningún paquete a R2.
-- **Heartbeat & Hibernation (`seen:`):** Latidos cada `3 s` persistidos en `DurableObjectStorage` para detectar desconexiones reales (> `10 s`) incluso cuando Cloudflare hiberna la instancia.
-- **Idempotency Controller (`IdempotentController`):** Bloqueo por clave de operación que evita clics duplicados en reproducción, descargas o salas.
-- **Up-Next Queue (`enqueueNext` / `enqueueFirst`):** Cola prioritaria independiente que intercala pistas antes de retomar la playlist activa.
-- **MediaSession + SW Notifications (sin VAPID):** Controles multimedia en pantalla de bloqueo y notificaciones locales gestionadas por Service Worker sin servidor Push.
+<details>
+<summary><strong>Abrir Glosario A–Z</strong> — Términos clave de audio, almacenamiento, salas y criptografía</summary>
+
+| Término | Definición práctica en GradMix | Dónde vive |
+| :--- | :--- | :--- |
+| **`devfs::` (`File System Access`)** | Almacenamiento opcional en carpeta real elegida con `showDirectoryPicker()`, guardando canciones con su nombre legible fuera de la cuota OPFS. | [`opfsStorage.ts`](gradmix-pwa/src/lib/storage/opfsStorage.ts) |
+| **Durable Object (`DO`)** | Instancia aislada con estado consistente en Cloudflare Workers: coordina cada sala (`RoomDurableObject`) o link (`BundleDurableObject`). | [`room.ts`](gradmix-api/src/room.ts) · [`bundle.ts`](gradmix-api/src/bundle.ts) |
+| **E2EE por fragmento `#k=`** | Cifrado `AES-256-GCM` en el cliente cuya clave viaja tras `#k=`, de modo que nunca se envía en peticiones HTTP al servidor. | [`shareCrypto.ts`](gradmix-pwa/src/lib/utils/shareCrypto.ts) |
+| **Equal-Power Crossfade** | Mezcla entre Deck A y Deck B con curvas $\cos(\theta)$ / $\sin(\theta)$ para mantener volumen percibido constante. | [`audioEngine.ts`](gradmix-pwa/src/lib/audio/audioEngine.ts) |
+| **`fMP4 -> .m4a` (Remuxing)** | Reempaquetado de segmentos HLS fragmentados en `.m4a` ISO-BMFF estándar para corregir duración sin recodificar AAC. | [`audioContainer.ts`](gradmix-pwa/src/lib/audio/audioContainer.ts) |
+| **Heartbeat & Hibernation (`seen:`)** | Latidos cada `3 s` persistidos en storage del DO para expulsar invitados tras `10 s` de ausencia incluso tras hibernación. | [`room.ts`](gradmix-api/src/room.ts) |
+| **`IdempotentController`** | Bloqueo por clave de operación que evita ejecuciones dobles por taps rápidos (crear sala, descargar o reproducir). | [`idempotency.ts`](gradmix-pwa/src/lib/utils/idempotency.ts) |
+| **`MediaSession` + SW Local** | Controles nativos en pantalla de bloqueo y notificaciones locales sin servidor Push ni claves VAPID. | [`mediaSession.ts`](gradmix-pwa/src/lib/audio/mediaSession.ts) · [`sw-media-controls.js`](gradmix-pwa/public/sw-media-controls.js) |
+| **`OPFS`** | *Origin Private File System*: sistema de archivos privado por origen optimizado para leer/escribir audio sin saturar la RAM. | [`opfsStorage.ts`](gradmix-pwa/src/lib/storage/opfsStorage.ts) |
+| **Up-Next (`enqueueFirst`/`Next`)** | Cola prioritaria independiente que inserta turnos inmediatos (ej. puesto `#1` en salas) antes de retomar la playlist activa. | [`queue.ts`](gradmix-pwa/src/lib/utils/queue.ts) |
+| **`Zero-Server Share` (`?share=`)** | Enlace cifrado con `AES-256-GCM` dentro de la URL para playlists de catálogo público sin guardar nada en servidor/R2. | [`shareCrypto.ts`](gradmix-pwa/src/lib/utils/shareCrypto.ts) |
+| **`ZIP DEFLATE / STORE`** | Empaquetado estándar sin dependencias usando `CompressionStream('deflate-raw')` (método `8` o `0`). | [`zip.ts`](gradmix-pwa/src/lib/utils/zip.ts) |
+
+</details>

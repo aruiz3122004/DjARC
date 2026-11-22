@@ -4,7 +4,7 @@
   import ConfirmModal from './ConfirmModal.svelte';
   import { isDeviceAudioKey } from '../lib/storage/opfsStorage';
   import type { Playlist, SortOrder, ThemeMode, Track } from '../lib/types';
-  import { extractBundleIdFromInput } from '../lib/utils/bundle';
+  import { parseSharedPlaylistInput } from '../lib/utils/shareCrypto';
   import {
     AUDIO_ACCEPT_ATTR,
     cleanDisplayArtist,
@@ -252,7 +252,7 @@
   function handleImportLinkPaste(ev: ClipboardEvent) {
     const pasted = ev.clipboardData?.getData('text')?.trim() ?? '';
     if (!pasted) return;
-    if (extractBundleIdFromInput(pasted)) {
+    if (parseSharedPlaylistInput(pasted)) {
       ev.preventDefault();
       importLinkInput = pasted;
       onImportFromLink(pasted);
@@ -386,28 +386,28 @@
   {#if showImportPanel}
     <div class="mt-3 space-y-2 border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-black">
       <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-        Importar playlist con canciones
+        Abrir playlist compartida
       </p>
       <form onsubmit={submitImportLink} class="flex gap-2">
         <input
           type="text"
           bind:value={importLinkInput}
           onpaste={handleImportLinkPaste}
-          placeholder="Pega aquí el link (?import=...) o código..."
+          placeholder="Pega aquí el enlace cifrado (?import=... / ?share=...) o código..."
           disabled={bundleBusy}
           class="flex-1 border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-900 placeholder-zinc-400 focus:border-cyan-500 focus:outline-none disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-white"
         />
         <button
           type="submit"
           disabled={bundleBusy || !importLinkInput.trim()}
-          title="Descargar playlist desde link"
-          aria-label="Descargar playlist desde link"
+          title="Abrir playlist compartida"
+          aria-label="Abrir playlist compartida"
           class="inline-flex items-center gap-1.5 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40 dark:bg-white dark:text-black"
         >
           <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3h16v-3" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke-linecap="round" />
           </svg>
-          <span class="hidden sm:inline">Descargar</span>
+          <span class="hidden sm:inline">Abrir</span>
         </button>
       </form>
 
@@ -615,9 +615,9 @@
                 <button
                   type="button"
                   onclick={() => onShareWhatsApp(pl)}
-                  disabled={plTracks.length === 0 || actionBusy}
-                  title="Compartir lista por WhatsApp"
-                  aria-label="Compartir lista por WhatsApp"
+                  disabled={plTracks.length === 0 || bundleBusy || actionBusy}
+                  title="Enviar link cifrado de playlist por WhatsApp"
+                  aria-label="Enviar link cifrado por WhatsApp"
                   class="flex h-8 w-8 items-center justify-center border border-zinc-200 bg-white transition hover:bg-zinc-100 active:scale-95 disabled:opacity-40 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900"
                 >
                   <img
@@ -704,13 +704,13 @@
                 </div>
 
                 {#if lastExportedLink}
-                  <div class="flex items-center gap-1.5 border-t border-zinc-200 pt-2 dark:border-zinc-900">
+                  <div class="flex flex-wrap items-center gap-1.5 border-t border-zinc-200 pt-2 dark:border-zinc-900">
                     <input
                       type="text"
                       readonly
                       value={lastExportedLink}
                       onclick={(e) => (e.currentTarget as HTMLInputElement).select()}
-                      class="flex-1 border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-mono text-zinc-800 focus:outline-none dark:border-zinc-800 dark:bg-black dark:text-zinc-200"
+                      class="min-w-[140px] flex-1 border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-mono text-zinc-800 focus:outline-none dark:border-zinc-800 dark:bg-black dark:text-zinc-200"
                     />
                     <button
                       type="button"
@@ -719,6 +719,14 @@
                     >
                       {copiedExportLink ? 'Copiado' : 'Copiar'}
                     </button>
+                    <a
+                      href={`https://wa.me/?text=${encodeURIComponent(`🎧 Escucha o descarga esta playlist en GradMix:\n${lastExportedLink}`)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="inline-flex items-center gap-1 border border-emerald-600/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400"
+                    >
+                      WhatsApp
+                    </a>
                   </div>
                 {/if}
               </div>

@@ -102,6 +102,7 @@ export class GradMixAudioEngine {
   private anchorAudio: HTMLAudioElement | null = null;
   private anchorUrl: string | null = null;
   private memoryBlobs = new Map<string, Blob>();
+  private lazyBlobResolver: ((trackId: string) => Promise<Blob | null>) | null = null;
   private transitionLocked = false;
 
   private listeners = new Set<(snapshot: AudioEngineSnapshot) => void>();
@@ -542,6 +543,10 @@ export class GradMixAudioEngine {
     return this.memoryBlobs.get(trackId) ?? null;
   }
 
+  setLazyBlobResolver(resolver: ((trackId: string) => Promise<Blob | null>) | null): void {
+    this.lazyBlobResolver = resolver;
+  }
+
   /**
    * Prepara la pista bajo demanda; para archivos medianos/grandes (>1.5 MB) inicia directo con
    * HTMLAudioElement streaming (~20-40ms, cero decodificación PCM bloqueante) con respaldo decodeAudioData.
@@ -557,7 +562,13 @@ export class GradMixAudioEngine {
       throw new Error('La canción ya no existe en la biblioteca.');
     }
 
-    const memBlob = this.memoryBlobs.get(trackId);
+    let memBlob = this.memoryBlobs.get(trackId) ?? null;
+    if (!memBlob && this.lazyBlobResolver) {
+      memBlob = await this.lazyBlobResolver(trackId);
+      if (memBlob) {
+        this.registerMemoryBlob(trackId, memBlob);
+      }
+    }
     const estSize = memBlob?.size ?? track.sizeBytes ?? 0;
 
     // Pistas completas (>1.5 MB): arranque casi instantáneo con HTMLAudioElement + MediaElementSource

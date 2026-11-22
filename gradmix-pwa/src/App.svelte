@@ -11,6 +11,7 @@
   import PlaylistManager from './components/PlaylistManager.svelte';
   import RoomView from './components/RoomView.svelte';
   import SearchResultsView from './components/SearchResultsView.svelte';
+  import SharedPlaylistModal from './components/SharedPlaylistModal.svelte';
   import SidebarNav from './components/SidebarNav.svelte';
   import {
     downloadAudiusTrackAsFile,
@@ -60,16 +61,26 @@
     RepeatMode,
     RoomPermissions,
     RoomPublicState,
+    SharedPlaylistPreview,
+    SharedPlaylistTrack,
     SortOrder,
     Track,
   } from './lib/types';
   import { extractAudioTags } from './lib/utils/audioTags';
   import {
     buildPlaylistZipBlob,
-    extractBundleIdFromInput,
     parseGradmixBundleFile,
     type BundleTrackManifest,
   } from './lib/utils/bundle';
+  import {
+    base64UrlToBytes,
+    decodeZeroServerPlaylistLink,
+    decryptShareBytes,
+    encodeZeroServerPlaylistLink,
+    encryptShareBytes,
+    generateShareKey,
+    parseSharedPlaylistInput,
+  } from './lib/utils/shareCrypto';
   import {
     cleanDisplayArtist,
     cleanDisplayTitle,
@@ -113,6 +124,10 @@
   let bundleBusy = $state(false);
   let bundleStatusText = $state<string | null>(null);
   let lastExportedLink = $state<string | null>(null);
+  let sharedPlaylistPreview = $state<SharedPlaylistPreview | null>(null);
+  let sharedPlaybackOrder = $state<string[]>([]);
+  const sharedTrackFetchers = new Map<string, () => Promise<Blob>>();
+  const sharedPendingFetches = new Map<string, Promise<Blob>>();
   let storageWarningDismissed = $state(false);
   let lastStorageAlertShown = false;
   let playerPlaylistExpanded = $state(false);
@@ -237,7 +252,8 @@
 
   function registerEphemeralTrack(tempTrack: Track) {
     const filtered = ephemeralTracks.filter((t) => t.id !== tempTrack.id);
-    ephemeralTracks = [...filtered.slice(-23), tempTrack];
+    const keepLimit = tempTrack.id.startsWith('shared-') ? 300 : 60;
+    ephemeralTracks = [...filtered.slice(-keepLimit), tempTrack];
   }
 
   let activePlaylist = $derived(
@@ -344,8 +360,13 @@
 
     untrack(() => {
       const currentId = engineSnapshot.currentTrackId;
+      const isSharedPlaying = Boolean(currentId && sharedPlaybackOrder.includes(currentId));
       const isStandalonePlaying = Boolean(currentId) && ephemeralById.has(currentId!);
-      const plTrackIds = isStandalonePlaying ? [currentId!] : activePlTrackIds;
+      const plTrackIds = isSharedPlaying
+        ? sharedPlaybackOrder
+        : isStandalonePlaying
+          ? [currentId!]
+          : activePlTrackIds;
       engine.syncLibrary(combinedTracks, plTrackIds);
     });
   });
@@ -1013,6 +1034,7 @@
               playCount: 0,
               favorite: false,
               addedAt: Date.now(),
+              catalogId: item.id,
             };
 
             tracks = [...tracks, newTrack];
@@ -1134,6 +1156,7 @@
           playCount: 0,
           favorite: track.favorite,
           addedAt: Date.now(),
+          catalogId: track.catalogId ?? (track.id.startsWith('ext-') ? track.id.slice(4) : undefined),
         };
 
         tracks = [...tracks, newTrack];
@@ -1158,6 +1181,11 @@
   onMount(() => {
     const unsub = engine.subscribe((snap) => {
       engineSnapshot = snap;
+    });
+
+    engine.setLazyBlobResolver(async (trackId) => {
+      if (!sharedTrackFetchers.has(trackId)) return null;
+      return await fetchSharedTrackBlobCached(trackId);
     });
 
     const handleSwMessage = (event: MessageEvent) => {
@@ -1241,12 +1269,19 @@
       void enrichMissingTrackTags(loadedTracks);
 
       const urlParams = new URLSearchParams(window.location.search);
+      const shareParam = urlParams.get('share');
       const importParam = urlParams.get('import');
       const roomInviteParam = urlParams.get('roomInvite');
-      if (importParam) {
+      if (shareParam) {
+        const fullHref = window.location.href;
         window.history.replaceState({}, '', window.location.pathname);
         activeModule = 'playlists';
-        void handleImportFromLink(importParam);
+        void handleImportFromLink(fullHref);
+      } else if (importParam) {
+        const fullHref = window.location.href;
+        window.history.replaceState({}, '', window.location.pathname);
+        activeModule = 'playlists';
+        void handleImportFromLink(fullHref);
       } else if (roomInviteParam) {
         window.history.replaceState({}, '', window.location.pathname);
         const dotIdx = roomInviteParam.indexOf('.');
@@ -1657,16 +1692,119 @@
     persistSettings({ masterVolume: vol });
   }
 
-  function handleShareWhatsApp(targetPlaylist?: Playlist) {
-    const pl = targetPlaylist ?? activePlaylist;
-    if (!pl) return;
-    const listTracks: Track[] = [];
-    for (const id of pl.trackIds) {
-      const trk = tracksById.get(id);
-      if (trk) listTracks.push(trk);
+  async function generateEncryptedPlaylistShareUrl(pl: Playlist): Promise<string> {
+    const listTracks = getOrderedTracksForPlaylist(pl);
+    if (listTracks.length === 0) {
+      throw new Error('La playlist está vacía.');
     }
-    const { url } = buildWhatsAppShareUrl(pl, listTracks, settings.crossfadeSeconds);
-    window.open(url, '_blank', 'noopener,noreferrer');
+
+    // Modo 0-servidor: si TODAS las pistas provienen del catálogo público remoto, ciframos en la URL
+    const allFromCatalog = listTracks.every((t) => Boolean(t.catalogId));
+    if (allFromCatalog) {
+      const zeroServerUrl = await encodeZeroServerPlaylistLink(
+        window.location.origin,
+        pl.name,
+        pl.block,
+        listTracks.map((t) => ({
+          catalogId: t.catalogId!,
+          title: t.title,
+          artist: t.artist,
+          duration: t.duration || 0,
+        }))
+      );
+      if (zeroServerUrl.length <= 1850) {
+        return zeroServerUrl;
+      }
+    }
+
+    // Modo cifrado E2EE (AES-256-GCM con clave #k en fragmento) + relevo efímero 24h en R2 para archivos locales
+    const { keyBytes, keyToken } = generateShareKey();
+    const manifestTracks: BundleTrackManifest[] = listTracks.map((t) => ({
+      title: t.title,
+      artist: t.artist,
+      fileName: t.fileName,
+      duration: t.duration,
+      bpm: t.bpm,
+      block: t.block,
+      mimeType: t.mimeType,
+      byteLength: t.sizeBytes,
+    }));
+
+    const createRes = await fetch(apiUrl('/api/bundles'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': createRequestId(),
+      },
+      body: JSON.stringify({
+        playlistName: pl.name,
+        block: pl.block,
+        tracks: manifestTracks,
+      }),
+    });
+    const createData = (await createRes.json()) as { id?: string; error?: string };
+    if (!createRes.ok || !createData.id) {
+      throw new Error(createData.error || 'No se pudo generar el enlace cifrado.');
+    }
+
+    for (let i = 0; i < listTracks.length; i += 1) {
+      const t = listTracks[i];
+      bundleStatusText = `Cifrando y preparando (${i + 1}/${listTracks.length}): ${t.title}`;
+      const buf = await readAudioArrayBuffer(t.opfsKey);
+      const encrypted = await encryptShareBytes(buf, keyBytes);
+      if (encrypted.byteLength > 35 * 1024 * 1024) {
+        throw new Error(`"${t.title}" supera el límite de 35 MB.`);
+      }
+      const upRes = await fetch(
+        apiUrl(`/api/bundles/${encodeURIComponent(createData.id)}/tracks/${i}`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: encrypted,
+        }
+      );
+      if (!upRes.ok) {
+        throw new Error(`Fallo al preparar "${t.title}".`);
+      }
+      importProgress = { done: i + 1, total: listTracks.length };
+    }
+
+    return `${window.location.origin}/?import=${encodeURIComponent(createData.id)}#k=${encodeURIComponent(keyToken)}`;
+  }
+
+  async function handleShareWhatsApp(targetPlaylist?: Playlist) {
+    const pl = targetPlaylist ?? activePlaylist;
+    if (!pl || bundleBusy) return;
+    const listTracks = getOrderedTracksForPlaylist(pl);
+    if (listTracks.length === 0) return;
+
+    bundleBusy = true;
+    lastExportedLink = null;
+    importProgress = { done: 0, total: listTracks.length };
+    bundleStatusText = `Creando enlace cifrado para "${pl.name}"...`;
+
+    try {
+      const shareUrl = await generateEncryptedPlaylistShareUrl(pl);
+      lastExportedLink = shareUrl;
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+      } catch {
+        // Ignorar bloqueo de portapapeles
+      }
+      const { url } = buildWhatsAppShareUrl(pl, listTracks, shareUrl);
+      const popup = window.open(url, '_blank', 'noopener,noreferrer');
+      showToast(
+        popup
+          ? 'Link cifrado generado y abierto en WhatsApp.'
+          : 'Link cifrado copiado. Si WhatsApp no abrió, pulsa Exportar → WhatsApp.'
+      );
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'No se pudo generar el link de WhatsApp.');
+    } finally {
+      bundleBusy = false;
+      bundleStatusText = null;
+      importProgress = null;
+    }
   }
 
   function getOrderedTracksForPlaylist(pl: Playlist): Track[] {
@@ -1767,62 +1905,16 @@
     bundleBusy = true;
     lastExportedLink = null;
     importProgress = { done: 0, total: listTracks.length };
-    bundleStatusText = `Empaquetando "${pl.name}" para link...`;
+    bundleStatusText = `Cifrando "${pl.name}" para link...`;
 
     try {
-      const manifestTracks: BundleTrackManifest[] = listTracks.map((t) => ({
-        title: t.title,
-        artist: t.artist,
-        fileName: t.fileName,
-        duration: t.duration,
-        bpm: t.bpm,
-        block: t.block,
-        mimeType: t.mimeType,
-        byteLength: t.sizeBytes,
-      }));
-
-      const createRes = await fetch(apiUrl('/api/bundles'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': createRequestId(),
-        },
-        body: JSON.stringify({
-          playlistName: pl.name,
-          block: pl.block,
-          tracks: manifestTracks,
-        }),
-      });
-      const createData = (await createRes.json()) as { id?: string; error?: string };
-      if (!createRes.ok || !createData.id) {
-        throw new Error(createData.error || 'No se pudo crear el paquete en el servidor.');
-      }
-
-      for (let i = 0; i < listTracks.length; i += 1) {
-        const t = listTracks[i];
-        bundleStatusText = `Subiendo audio (${i + 1}/${listTracks.length}): ${t.title}`;
-        const buf = await readAudioArrayBuffer(t.opfsKey);
-        const upRes = await fetch(
-          apiUrl(`/api/bundles/${encodeURIComponent(createData.id)}/tracks/${i}`),
-          {
-            method: 'POST',
-            headers: { 'Content-Type': t.mimeType || 'application/octet-stream' },
-            body: buf,
-          }
-        );
-        if (!upRes.ok) {
-          throw new Error(`Fallo al subir "${t.title}".`);
-        }
-        importProgress = { done: i + 1, total: listTracks.length };
-      }
-
-      const shareUrl = `${window.location.origin}/?import=${encodeURIComponent(createData.id)}`;
+      const shareUrl = await generateEncryptedPlaylistShareUrl(pl);
       lastExportedLink = shareUrl;
       try {
         await navigator.clipboard.writeText(shareUrl);
-        showToast('Link de playlist con canciones copiado al portapapeles.');
+        showToast('Link cifrado de playlist copiado al portapapeles.');
       } catch {
-        showToast('Link de playlist generado.');
+        showToast('Link cifrado de playlist generado.');
       }
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Error al generar link de playlist.');
@@ -1864,19 +1956,103 @@
     }
   }
 
+  async function fetchSharedTrackBlobCached(trackId: string): Promise<Blob> {
+    const existingMem = engine.getMemoryBlob(trackId);
+    if (existingMem) return existingMem;
+
+    const pending = sharedPendingFetches.get(trackId);
+    if (pending) return await pending;
+
+    const fetcher = sharedTrackFetchers.get(trackId);
+    if (!fetcher) {
+      throw new Error('Pista compartida no disponible.');
+    }
+
+    const job = fetcher().finally(() => {
+      sharedPendingFetches.delete(trackId);
+    });
+    sharedPendingFetches.set(trackId, job);
+    const blob = await job;
+    engine.registerMemoryBlob(trackId, blob);
+    return blob;
+  }
+
   async function handleImportFromLink(rawInput: string) {
     if (bundleBusy) return;
-    if (!(await ensureCanDownloadToStorage())) return;
-    const bundleId = extractBundleIdFromInput(rawInput);
-    if (!bundleId) {
+    const parsed = parseSharedPlaylistInput(rawInput);
+    if (!parsed) {
       showToast('Link o código de playlist inválido.');
       return;
     }
 
     bundleBusy = true;
-    bundleStatusText = 'Consultando playlist compartida...';
+    bundleStatusText = 'Cargando vista previa de playlist compartida...';
     try {
-      const metaRes = await fetch(apiUrl(`/api/bundles/${encodeURIComponent(bundleId)}`));
+      sharedTrackFetchers.clear();
+      sharedPendingFetches.clear();
+
+      if (parsed.kind === 'catalog-share') {
+        const decoded = await decodeZeroServerPlaylistLink(parsed.token);
+        const batchTag = generateTrackId().slice(0, 6);
+        const previewTracks: SharedPlaylistTrack[] = decoded.tracks.map((item, idx) => {
+          const trackId = `shared-${batchTag}-${idx}`;
+          const mimeType = 'audio/mp4';
+          const fileName = `${item.title}.m4a`;
+          const tempTrack: Track = {
+            id: trackId,
+            fileName,
+            opfsKey: '',
+            title: item.title,
+            artist: item.artist,
+            duration: item.duration || 0,
+            sizeBytes: 2_000_000,
+            mimeType,
+            bpm: null,
+            bpmStatus: 'done',
+            block: decoded.block,
+            playCount: 0,
+            favorite: false,
+            addedAt: Date.now() + idx,
+            catalogId: item.catalogId,
+          };
+          registerEphemeralTrack(tempTrack);
+          sharedTrackFetchers.set(trackId, async () =>
+            downloadAudiusTrackAsFile({
+              id: item.catalogId,
+              title: item.title,
+              artist: item.artist,
+              duration: item.duration || 0,
+              genre: '',
+              artworkUrl: null,
+              host: 'catalog',
+            })
+          );
+          return {
+            index: idx,
+            trackId,
+            title: item.title,
+            artist: item.artist,
+            duration: item.duration || 0,
+            mimeType,
+            fileName,
+            catalogId: item.catalogId,
+          };
+        });
+
+        sharedPlaylistPreview = {
+          title: decoded.playlistName,
+          block: decoded.block,
+          sourceKind: 'catalog-share',
+          isEncrypted: true,
+          isZeroServer: true,
+          tracks: previewTracks,
+          loadingTrackIndex: null,
+          downloading: false,
+        };
+        return;
+      }
+
+      const metaRes = await fetch(apiUrl(`/api/bundles/${encodeURIComponent(parsed.bundleId)}`));
       const meta = (await metaRes.json()) as {
         playlistName?: string;
         block?: PartyBlock;
@@ -1887,24 +2063,137 @@
         throw new Error(meta.error || 'Playlist compartida no encontrada o expirada.');
       }
 
-      const importedCount = await importBundleEntriesIntoNewPlaylist(
-        meta.playlistName || 'Playlist importada',
-        meta.block || 'Fiesta Principal',
-        meta.tracks,
-        async (index) => {
+      const keyBytes = parsed.keyToken ? base64UrlToBytes(parsed.keyToken) : null;
+      const previewTracks: SharedPlaylistTrack[] = meta.tracks.map((item, idx) => {
+        const trackId = `shared-${parsed.bundleId}-${idx}`;
+        const mimeType = item.mimeType || 'audio/mpeg';
+        const fileName = item.fileName || `track-${idx + 1}.mp3`;
+        const tempTrack: Track = {
+          id: trackId,
+          fileName,
+          opfsKey: '',
+          title: item.title,
+          artist: item.artist,
+          duration: item.duration || 0,
+          sizeBytes: item.byteLength || 2_000_000,
+          mimeType,
+          bpm: item.bpm ?? null,
+          bpmStatus: 'done',
+          block: item.block || meta.block || 'Fiesta Principal',
+          playCount: 0,
+          favorite: false,
+          addedAt: Date.now() + idx,
+        };
+        registerEphemeralTrack(tempTrack);
+        sharedTrackFetchers.set(trackId, async () => {
           const trackRes = await fetch(
-            apiUrl(`/api/bundles/${encodeURIComponent(bundleId)}/tracks/${index}`)
+            apiUrl(`/api/bundles/${encodeURIComponent(parsed.bundleId)}/tracks/${idx}`)
           );
           if (!trackRes.ok) {
-            throw new Error(`No se pudo descargar pista ${index + 1}`);
+            throw new Error(`No se pudo cargar "${item.title}".`);
           }
-          return await trackRes.blob();
+          const rawBuf = await trackRes.arrayBuffer();
+          if (keyBytes) {
+            const plainBuf = await decryptShareBytes(rawBuf, keyBytes);
+            return new Blob([plainBuf], { type: mimeType });
+          }
+          return new Blob([rawBuf], { type: mimeType });
+        });
+        return {
+          index: idx,
+          trackId,
+          title: item.title,
+          artist: item.artist,
+          duration: item.duration || 0,
+          mimeType,
+          fileName,
+        };
+      });
+
+      sharedPlaylistPreview = {
+        title: meta.playlistName || 'Playlist compartida',
+        block: meta.block || 'Fiesta Principal',
+        sourceKind: 'bundle',
+        isEncrypted: Boolean(keyBytes),
+        isZeroServer: false,
+        tracks: previewTracks,
+        loadingTrackIndex: null,
+        downloading: false,
+      };
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Error al abrir playlist compartida.');
+    } finally {
+      bundleBusy = false;
+      bundleStatusText = null;
+      importProgress = null;
+    }
+  }
+
+  async function handlePlaySharedTrack(index: number) {
+    const preview = sharedPlaylistPreview;
+    if (!preview) return;
+    const item = preview.tracks[index];
+    if (!item) return;
+
+    await actionController.run(`shared:play:${index}`, async () => {
+      if (!sharedPlaylistPreview) return;
+      sharedPlaylistPreview = { ...sharedPlaylistPreview, loadingTrackIndex: index };
+      try {
+        await engine.unlock();
+        await fetchSharedTrackBlobCached(item.trackId);
+        const sharedOrder = preview.tracks.map((t) => t.trackId);
+        sharedPlaybackOrder = sharedOrder;
+        engine.syncLibrary([...tracks, ...ephemeralTracks], sharedOrder);
+        await engine.playTrack(item.trackId, {
+          crossfade: engineSnapshot.status === 'playing',
+          crossfadeDuration: Math.min(3, settings.crossfadeSeconds),
+          playlistIndex: index,
+        });
+        showToast(`Reproduciendo "${item.title}" sin descargar.`);
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : `No se pudo reproducir "${item.title}".`);
+      } finally {
+        if (sharedPlaylistPreview) {
+          sharedPlaylistPreview = { ...sharedPlaylistPreview, loadingTrackIndex: null };
+        }
+      }
+    });
+  }
+
+  async function handleDownloadSharedPlaylist() {
+    const preview = sharedPlaylistPreview;
+    if (!preview || preview.downloading || bundleBusy) return;
+    if (!(await ensureCanDownloadToStorage())) return;
+
+    sharedPlaylistPreview = { ...preview, downloading: true };
+    bundleBusy = true;
+    try {
+      const manifestEntries: BundleTrackManifest[] = preview.tracks.map((item) => ({
+        title: item.title,
+        artist: item.artist,
+        fileName: item.fileName,
+        duration: item.duration,
+        bpm: null,
+        block: preview.block,
+        mimeType: item.mimeType,
+        byteLength: 0,
+      }));
+      const importedCount = await importBundleEntriesIntoNewPlaylist(
+        preview.title,
+        preview.block,
+        manifestEntries,
+        async (index) => {
+          const track = preview.tracks[index];
+          return await fetchSharedTrackBlobCached(track.trackId);
         }
       );
-
-      showToast(`${importedCount} canciones descargadas en el búfer offline.`);
+      sharedPlaylistPreview = null;
+      showToast(`Playlist guardada offline (${importedCount} canciones).`);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Error al importar playlist por link.');
+      showToast(err instanceof Error ? err.message : 'No se pudo descargar la playlist.');
+      if (sharedPlaylistPreview) {
+        sharedPlaylistPreview = { ...sharedPlaylistPreview, downloading: false };
+      }
     } finally {
       bundleBusy = false;
       bundleStatusText = null;
@@ -3373,6 +3662,16 @@
       </div>
     </div>
   {/if}
+
+  <SharedPlaylistModal
+    shared={sharedPlaylistPreview}
+    currentTrackId={engineSnapshot.currentTrackId}
+    isPlaying={engineSnapshot.status === 'playing'}
+    onPlayAll={() => void handlePlaySharedTrack(0)}
+    onPlayTrack={(idx) => void handlePlaySharedTrack(idx)}
+    onDownloadPlaylist={() => void handleDownloadSharedPlaylist()}
+    onClose={() => (sharedPlaylistPreview = null)}
+  />
 
   {#if toastMessage}
     <div

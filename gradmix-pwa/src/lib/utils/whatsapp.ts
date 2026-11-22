@@ -2,36 +2,22 @@ import type { AppSettings, Playlist, SessionExportPayload, Track } from '../type
 import { formatDurationTotal, formatTime } from './format';
 
 /**
- * Construye el texto y enlace `https://wa.me/?text=...` para compartir
- * el setlist completo de la fiesta por WhatsApp.
+ * Construye el mensaje corto y enlace `https://wa.me/?text=...` con el link cifrado
+ * para que el receptor abra la playlist, la escuche al instante o la descargue.
  */
 export function buildWhatsAppShareUrl(
   playlist: Playlist,
   tracks: Track[],
-  crossfadeSeconds: number
+  shareUrl: string
 ): { url: string; message: string } {
   const totalSec = tracks.reduce((sum, t) => sum + (t.duration || 0), 0);
-  const header = [
-    `🎧 *GradMix Auto-DJ* — *${playlist.name}*`,
-    `📦 Bloque: ${playlist.block} | 🎵 ${tracks.length} canciones (${formatDurationTotal(totalSec)})`,
-    `🎚️ Crossfade Equal-Power: ${crossfadeSeconds}s`,
-    '',
-    '*Tracklist:*',
-  ];
+  const message = [
+    `🎧 *GradMix — ${playlist.name}*`,
+    `🎵 ${tracks.length} canciones (${formatDurationTotal(totalSec)})`,
+    `🔒 Enlace cifrado — abre para reproducir al instante sin descargar o guardar la playlist:`,
+    shareUrl,
+  ].join('\n');
 
-  const maxLines = 40;
-  const lines = tracks.slice(0, maxLines).map((track, idx) => {
-    const bpmTag = track.bpm ? ` · ${track.bpm} BPM` : '';
-    return `${idx + 1}. ${track.title} — ${track.artist} (${formatTime(track.duration)}${bpmTag})`;
-  });
-
-  if (tracks.length > maxLines) {
-    lines.push(`... y ${tracks.length - maxLines} canciones más.`);
-  }
-
-  lines.push('', '🚀 Reproducido 100% offline con GradMix PWA');
-
-  const message = [...header, ...lines].join('\n');
   const url = `https://wa.me/?text=${encodeURIComponent(message)}`;
   return { url, message };
 }

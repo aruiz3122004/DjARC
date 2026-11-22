@@ -57,6 +57,30 @@ export interface Track {
   playCount: number;
   favorite?: boolean;
   addedAt: number;
+  /** ID en catálogo público remoto (si proviene de SoundCloud/Audius) para compartir sin servidor. */
+  catalogId?: string;
+}
+
+export interface SharedPlaylistTrack {
+  index: number;
+  trackId: string;
+  title: string;
+  artist: string;
+  duration: number;
+  mimeType: string;
+  fileName: string;
+  catalogId?: string;
+}
+
+export interface SharedPlaylistPreview {
+  title: string;
+  block: PartyBlock;
+  sourceKind: 'catalog-share' | 'bundle';
+  isEncrypted: boolean;
+  isZeroServer: boolean;
+  tracks: SharedPlaylistTrack[];
+  loadingTrackIndex: number | null;
+  downloading: boolean;
 }
 
 export interface Playlist {
